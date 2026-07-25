@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.python-version.local
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Models / caches (HF caches live in ~/.cache by default; ignore any local stray)
+*.mlx
+models/
+
+# Keep generated samples (they are deliverable evidence), but ignore bulk raw dumps
+raw_dumps/
+
+# SDD workspace (git-ignored scratch)
+.superpowers/
+
+# seek_probe spike
+seek_probe/cache/
+seek_probe/refs/*.wav
+seek_probe/refs/*.mp3
