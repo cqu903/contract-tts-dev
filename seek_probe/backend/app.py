@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -89,6 +89,28 @@ async def get_segment(contract_id: str, seg_idx: int):
                     cache.put(key, bytes(buf))
 
     return StreamingResponse(streamed(), media_type="audio/wav")
+
+
+@app.post("/api/preload/{contract_id}/{seg_idx}")
+async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTasks):
+    idx = build_index(contract_id, _resolve_contract(contract_id))
+    if seg_idx < 0 or seg_idx >= len(idx.segments):
+        raise HTTPException(status_code=404, detail="seg_idx out of range")
+    key = cache_key(idx.segments[seg_idx].text, VOICE_REF_ID)
+    if cache.has(key):
+        return {"status": "cached", "seg_idx": seg_idx}
+
+    async def _bg():
+        async with _lock_for(key):
+            if cache.has(key):
+                return
+            buf = bytearray()
+            async for chunk in engine.synth(idx.segments[seg_idx].text):
+                buf.extend(chunk)
+            cache.put(key, bytes(buf))
+
+    background_tasks.add_task(_bg)
+    return {"status": "preloading", "seg_idx": seg_idx}
 
 
 # frontend/ is created in Task 10; guard so importing app (Task 8/9 tests) doesn't crash before then
