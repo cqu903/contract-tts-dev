@@ -18,9 +18,10 @@ CACHE_DIR = ROOT / "cache"
 
 # --- probe config (hardcoded) ---
 ENGINE_URL = "http://127.0.0.1:9880"
-REF_AUDIO = str(ROOT / "refs" / "cantonese_ref.wav")
-REF_PROMPT = (ROOT / "refs" / "cantonese_ref.txt").read_text(encoding="utf-8").strip() \
-    if (ROOT / "refs" / "cantonese_ref.txt").exists() else ""
+# NOTE: GPT-SoVITS rejects reference clips outside 3-10s; use the trimmed 7s ref.
+REF_AUDIO = str(ROOT / "refs" / "cantonese_ref_trim.wav")
+REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-8").strip() \
+    if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
 VOICE_REF_ID = "cantonese_ref_v1"
 
 _CONTRACT_FILES = {"sample": ROOT / "contracts" / "sample_contract.txt"}

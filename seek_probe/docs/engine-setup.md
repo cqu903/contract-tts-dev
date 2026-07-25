@@ -56,3 +56,12 @@ ls -la /tmp/yue_smoke.wav   # KB+ = 拿到音频
 ## 7. 确认 /tts 参数名
 
 打开 `GPT-SoVITS/api_v2.py`,核对 JSON 字段名(`text` / `text_lang` / `ref_audio_path` / `prompt_text` / `prompt_lang` / `media_type` / `streaming_mode`)与安装版本一致。若不同,记到本文档 —— `gptsovits_client.py` 须用实际字段名。
+
+## 8. 实测踩坑(M0 已验证通过,2026-07-25 M3 Max)
+
+1. **`hf download lj1995/GPT-SoVITS <folder>` 会 404** —— 该 CLI 把 folder 当单文件 resolve。改用 **ModelScope 镜像 `XXXXRT/GPT-SoVITS-Pretrained`**(国内快很多),按 `pretrained_models/<subfolder>/<file>` 的 resolve URL 逐文件拉。需要的子目录:`gsv-v2final-pretrained/`、`chinese-hubert-base/`、`chinese-roberta-wwm-ext-large/`、`fast_langdetect/`。
+2. **缺 `pretrained_models/fast_langdetect`** → 报 `Cache directory not found: .../fast_langdetect`。补 `lid.176.bin` + `lid.176.ftz`(ModelScope 有)。
+3. **`TorchCodec is required for load_with_torchcodec`** —— 根因是 **torchaudio 2.11 / torch 2.13 过新**(requirements 未 pin 上限,uv 装了最新)。修法:`uv pip install -p .venv torchcodec`(实测有效;降 transformers 到 4.46.3 无用,因为是 torchaudio 触发)。
+4. **参考音频必须 3–10 秒** —— 否则 `参考音频在3~10秒范围外`。用 `seek_probe/refs/cantonese_ref_trim.wav`(7s)+ 对应转写 `cantonese_ref_trim.txt`。app.py 已指向 trim 版。
+5. **本机 `http_proxy=localhost:7897`(clash)** —— curl 测试加 `--noproxy '*'`;后端 httpx 客户端必须 `trust_env=False`(已在 `gptsovits_client.py` 处理),否则 127.0.0.1 走代理 → 502。浏览器访问 localhost 通常自动 bypass。
+6. **M0 结果**:书面中文 `甲方應於三日內支付訂金。` + `text_lang=yue` → 3.9s 粤语音频,生成耗时 1.57s,**RTF≈0.4**(M3 Max CPU,快于实时)。样本见 `samples/gptsovits_yue_m0.wav`。

@@ -28,7 +28,8 @@ class GPTSoVITSClient:
             "media_type": "wav",
             "streaming_mode": False,
         }
-        async with httpx.AsyncClient(timeout=self.timeout, transport=transport) as client:
+        # trust_env=False: do NOT route localhost through HTTP_PROXY (e.g. clash on :7897) -> 502
+        async with httpx.AsyncClient(timeout=self.timeout, transport=transport, trust_env=False) as client:
             async with client.stream("POST", f"{self.base_url}/tts", json=payload) as r:
                 r.raise_for_status()
                 async for chunk in r.aiter_bytes():
