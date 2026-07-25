@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "Local capability-boundary validation of mlx-audio + Qwen3-TTS (粤/普/英). A validation spike, not a service."
 requires-python = ">=3.12"
 dependencies = [
+    "cn2an>=0.5.24",
     "fastapi>=0.140.0",
     "httpx>=0.28.1",
     "ipykernel>=7.3.0",

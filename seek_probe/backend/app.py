@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from seek_probe.backend.contract import build_index
 from seek_probe.backend.cache import cache_key, SegmentCache
 from seek_probe.backend.gptsovits_client import GPTSoVITSClient
+from seek_probe.backend.normalizer import normalize_for_tts
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT / "frontend"
@@ -68,7 +69,8 @@ async def get_segment(contract_id: str, seg_idx: int):
     if seg_idx < 0 or seg_idx >= len(idx.segments):
         raise HTTPException(status_code=404, detail="seg_idx out of range")
     seg_text = idx.segments[seg_idx].text
-    key = cache_key(seg_text, VOICE_REF_ID)
+    tts_text = normalize_for_tts(seg_text)   # Arabic numbers -> Chinese for correct reading
+    key = cache_key(tts_text, VOICE_REF_ID)
 
     cached = cache.get(key)
     if cached is not None:
@@ -82,7 +84,7 @@ async def get_segment(contract_id: str, seg_idx: int):
                 return
             buf = bytearray()
             try:
-                async for chunk in engine.synth(seg_text):
+                async for chunk in engine.synth(tts_text):
                     buf.extend(chunk)
                     yield chunk                  # tee: forward to client ASAP
             finally:
@@ -97,7 +99,8 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
     idx = build_index(contract_id, _resolve_contract(contract_id))
     if seg_idx < 0 or seg_idx >= len(idx.segments):
         raise HTTPException(status_code=404, detail="seg_idx out of range")
-    key = cache_key(idx.segments[seg_idx].text, VOICE_REF_ID)
+    tts_text = normalize_for_tts(idx.segments[seg_idx].text)
+    key = cache_key(tts_text, VOICE_REF_ID)
     if cache.has(key):
         return {"status": "cached", "seg_idx": seg_idx}
 
@@ -106,7 +109,7 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
             if cache.has(key):
                 return
             buf = bytearray()
-            async for chunk in engine.synth(idx.segments[seg_idx].text):
+            async for chunk in engine.synth(tts_text):
                 buf.extend(chunk)
             cache.put(key, bytes(buf))
 
