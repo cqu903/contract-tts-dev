@@ -856,7 +856,9 @@ async def get_segment(contract_id: str, seg_idx: int):
     return StreamingResponse(streamed(), media_type="audio/wav")
 
 
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+# frontend/ is created in Task 10; guard so importing app (Task 8/9 tests) doesn't crash before then
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
