@@ -1,7 +1,10 @@
 # 粵語合同朗讀 + 可拖動進度條(穿刺)
 
-可行性穿刺:GPT-SoVITS(粵語)+ 分段 / 內容尋址緩存 / 段內流式 / seek 映射 + 網頁播放器。
-見 spec:`docs/superpowers/specs/2026-07-25-cantonese-tts-seek-probe-design.md`。
+可行性穿刺:GPT-SoVITS(粵語)+ 分段 / 內容尋址緩存 / 文本歸一化 / seek 映射 + 網頁播放器。
+
+- **架構說明(as-built,代碼為準):** `seek_probe/docs/architecture.md`
+- 設計 spec:`docs/superpowers/specs/2026-07-25-cantonese-tts-seek-probe-design.md`
+- 引擎安裝:`seek_probe/docs/engine-setup.md`
 
 ## 運行
 

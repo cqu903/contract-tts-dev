@@ -66,22 +66,22 @@
 1. 用户拖到 t 秒 → 前端按段索引算出落在第 K 段。
 2. `GET /api/segment/{id}/{K}` → 后端查内容寻址缓存。
 3. **命中** → 直接流式回放文件(瞬开)。
-4. **未命中** → 调 GPT-SoVITS 流式生成,字节**边回前端边落盘**(tee)。
-5. 前端 `<audio>` 在首 chunk 到达即播;同时后台预热 K+1…K+n。
+4. **未命中** → `normalize_for_tts(段文本)`(数字/金额/日期/型号 → 中文)→ 调 GPT-SoVITS 生成,**收齐整段字节后**回传 + 落盘(非 tee;为能回明确错误码)。
+5. 前端 `<audio>` 拿到整段 wav 即播;同时后台预热 K+1…K+n。
 
 ## 5. 组件
 
 | 组件 | 职责 | 关键点 |
 |---|---|---|
 | **分句器 segmenter** | 合同文本 → 确定性分段(按 `。！？；`,过长句再按 `，、` 切),每段 `{id, text, est_dur_s}` | **确定性**是缓存键稳定的前提;`est_dur` 按字数×语速估(粤语自然语速 ~3.5–4 字/秒,实测校准) |
-| **内容寻址缓存 cache** | key=`hash(段文本 + voice_ref_id)`,磁盘 `cache/<hash>.wav` + 清单(SQLite 或 JSON) | 相同文本(静态 boilerplate)跨合同自动复用一个文件 → 免费"预生成" |
+| **内容寻址缓存 cache** | key=`hash(归一化段文本 + voice_ref_id)`,磁盘 `cache/<hash>.wav` + manifest.json | 相同文本(静态 boilerplate)跨合同自动复用一个文件 → 免费"预生成" |
 | **FastAPI 后端** | 3 个接口 + 托管网页 | 轻量,只做编排 |
 | **GPT-SoVITS 适配层** | 对 `api_v2.py` 的薄 HTTP 客户端:`(文本, 固定参考音) → 流式音频字节` | lang 走粤语;固定参考音频保证跨段同音色 |
 | **前端** | 进度条 + `<audio>` + 播放/seek/预热 | 纯 HTML/JS,无框架 |
 
 **后端接口:**
 - `GET /api/contract/{id}` → 段索引:`[{seg_idx, est_dur_s, cumulative_start_s}]` + 总估时。前端用它画进度条。
-- `GET /api/segment/{id}/{seg_idx}` → 该段音频(命中=流式回放文件;未命中=生成并 tee 落盘),`StreamingResponse`。
+- `GET /api/segment/{id}/{seg_idx}` → 该段音频(命中=`FileResponse` 回放文件;未命中=归一化→生成→落盘→`Response`)。引擎失败回 502、其它异常回 500。
 - `POST /api/preload/{id}/{seg_idx}`(可选)→ 后台预热后续段。
 - `GET /` → 静态网页。
 
