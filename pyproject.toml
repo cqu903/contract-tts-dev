@@ -1,7 +1,7 @@
 [project]
-name = "audio-with-qwen3-tts"
+name = "cantonese-tts-probe"
 version = "0.0.0"
-description = "Local capability-boundary validation of mlx-audio + Qwen3-TTS (粤/普/英). A validation spike, not a service."
+description = "Cantonese contract-TTS seek/cache probe on GPT-SoVITS: segmentation + content-addressed cache + text normalization + seek mapping + web player."
 requires-python = ">=3.12"
 dependencies = [
     "cn2an>=0.5.24",
