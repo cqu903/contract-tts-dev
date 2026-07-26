@@ -66,5 +66,17 @@ bar.addEventListener("change", () => {
   totalEst = data.total_est_s;
   segTexts = data.texts;
   bar.disabled = false;
-  statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預估 ${totalEst.toFixed(0)}s`;
+  statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預載第 1 段中…`;
+  // 預載第 1 段並設為 audio.src,這樣首次按「播放」就能直接出聲。
+  // 否則原生播放鍵因 audio.src 為空而無反應,須先拖動進度條才會 playFrom。
+  current = 0;
+  try {
+    const blob = await loadSegment(0);
+    audio.src = URL.createObjectURL(blob);
+    clauseEl.textContent = segTexts[0] || "";
+    bar.value = 0;
+    statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預估 ${totalEst.toFixed(0)}s(已預載第 1 段,按播放即可)`;
+  } catch (e) {
+    statusEl.textContent = `就緒 · 預載第 1 段失敗:${e.message}(可拖動進度條開始)`;
+  }
 })();
