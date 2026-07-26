@@ -21,3 +21,7 @@ raw_dumps/
 seek_probe/cache/
 seek_probe/refs/*.wav
 seek_probe/refs/*.mp3
+
+# OS / logs
+.DS_Store
+*.log
