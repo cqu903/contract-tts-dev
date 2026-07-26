@@ -65,3 +65,4 @@ ls -la /tmp/yue_smoke.wav   # KB+ = 拿到音频
 4. **参考音频必须 3–10 秒** —— 否则 `参考音频在3~10秒范围外`。用 `seek_probe/refs/cantonese_ref_trim.wav`(7s)+ 对应转写 `cantonese_ref_trim.txt`。app.py 已指向 trim 版。
 5. **本机 `http_proxy=localhost:7897`(clash)** —— curl 测试加 `--noproxy '*'`;后端 httpx 客户端必须 `trust_env=False`(已在 `gptsovits_client.py` 处理),否则 127.0.0.1 走代理 → 502。浏览器访问 localhost 通常自动 bypass。
 6. **M0 结果**:书面中文 `甲方應於三日內支付訂金。` + `text_lang=yue` → 3.9s 粤语音频,生成耗时 1.57s,**RTF≈0.4**(M3 Max CPU,快于实时)。样本见 `samples/gptsovits_yue_m0.wav`。
+7. **含拉丁字母的文本(如型号 `XR-7200`)→ 引擎 400 `Resource 'averaged_perceptron_tagger_eng' not found`**。GPT-SoVITS 英文前端需要 NLTK 数据。下载 ModelScope 的 `nltk_data.zip`,解压到 `~/nltk_data/`,**注意 zip 内有嵌套的 `nltk_data/` 目录,要把里面那层的内容拍平到 `~/nltk_data/`**(否则 NLTK 找不到 `taggers/averaged_perceptron_tagger_eng`)。

@@ -4,8 +4,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from seek_probe.backend.contract import build_index
@@ -75,23 +76,23 @@ async def get_segment(contract_id: str, seg_idx: int):
     cached = cache.get(key)
     if cached is not None:
         return FileResponse(cached, media_type="audio/wav")
-
-    async def streamed():
-        async with _lock_for(key):
+    # Generate fully, THEN respond: on engine failure we can return a proper
+    # error (502/500) instead of an empty 200 that the browser masks as "Load failed".
+    try:
+        async with _lock_for(key):               # concurrent identical requests -> one gen
             cached_again = cache.get(key)        # double-check after lock
             if cached_again is not None:
-                yield cached_again.read_bytes()
-                return
+                return FileResponse(cached_again, media_type="audio/wav")
             buf = bytearray()
-            try:
-                async for chunk in engine.synth(tts_text):
-                    buf.extend(chunk)
-                    yield chunk                  # tee: forward to client ASAP
-            finally:
-                if buf:
-                    cache.put(key, bytes(buf))
-
-    return StreamingResponse(streamed(), media_type="audio/wav")
+            async for chunk in engine.synth(tts_text):
+                buf.extend(chunk)
+            data = bytes(buf)
+            cache.put(key, data)
+        return Response(data, media_type="audio/wav")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"tts failed: {e}")
 
 
 @app.post("/api/preload/{contract_id}/{seg_idx}")
@@ -105,13 +106,16 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
         return {"status": "cached", "seg_idx": seg_idx}
 
     async def _bg():
-        async with _lock_for(key):
-            if cache.has(key):
-                return
-            buf = bytearray()
-            async for chunk in engine.synth(tts_text):
-                buf.extend(chunk)
-            cache.put(key, bytes(buf))
+        try:
+            async with _lock_for(key):
+                if cache.has(key):
+                    return
+                buf = bytearray()
+                async for chunk in engine.synth(tts_text):
+                    buf.extend(chunk)
+                cache.put(key, bytes(buf))
+        except Exception as e:
+            print(f"[preload seg {seg_idx}] failed: {e}", flush=True)
 
     background_tasks.add_task(_bg)
     return {"status": "preloading", "seg_idx": seg_idx}
