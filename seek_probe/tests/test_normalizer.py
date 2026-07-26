@@ -14,6 +14,12 @@ def test_quantity():
     assert normalize_for_tts("數量共12,000件") == "數量共一万二千件"
 
 
+def test_model_number_read_digit_by_digit():
+    # codes read digit-by-digit, not as a quantity
+    assert normalize_for_tts("型號為XR-7200") == "型號為XR-七二零零"
+    assert normalize_for_tts("採用A100晶片") == "採用A一零零晶片"
+
+
 def test_percentage_decimal():
     assert normalize_for_tts("年利率5.25%") == "年利率百分之五點二五"
 

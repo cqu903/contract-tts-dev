@@ -44,6 +44,9 @@ def normalize_for_tts(text: str) -> str:
     # 4) month / day numbers
     text = re.sub(r'(\d{1,2})月', lambda m: an2cn(str(int(m.group(1)))) + "月", text)
     text = re.sub(r'(\d{1,2})日', lambda m: an2cn(str(int(m.group(1)))) + "日", text)
-    # 5) remaining numbers (amounts, quantities, durations) -> cn
+    # 5) alphanumeric codes (letters + opt-hyphen + digits): read digits one-by-one
+    #    e.g. XR-7200 -> XR-七二零零 (a code, not the quantity 七千二百)
+    text = re.sub(r'([A-Za-z]+-?)(\d+)', lambda m: m.group(1) + _digits_to_cn(m.group(2)), text)
+    # 6) remaining numbers (amounts, quantities, durations) -> cn
     text = re.sub(r'\d[\d,]*\.?\d*', lambda m: _num_to_cn(m.group(0)), text)
     return text
