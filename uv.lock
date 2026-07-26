@@ -38,7 +38,7 @@ wheels = [
 ]
 
 [[package]]
-name = "audio-with-qwen3-tts"
+name = "cantonese-tts-probe"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
