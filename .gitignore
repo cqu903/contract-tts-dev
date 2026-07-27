@@ -21,6 +21,13 @@ raw_dumps/
 seek_probe/cache/
 seek_probe/refs/*.wav
 seek_probe/refs/*.mp3
+# generated A/B verification audio clips
+seek_probe/verify/
+
+# Real contract texts may contain PII (names, ID numbers, addresses);
+# only the synthetic sample is tracked.
+seek_probe/contracts/*
+!seek_probe/contracts/sample_contract.txt
 
 # OS / logs
 .DS_Store

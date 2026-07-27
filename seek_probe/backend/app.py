@@ -26,7 +26,10 @@ REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-
     if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
 VOICE_REF_ID = "cantonese_ref_v1"
 
-_CONTRACT_FILES = {"sample": ROOT / "contracts" / "sample_contract.txt"}
+_CONTRACT_FILES = {
+    "sample": ROOT / "contracts" / "sample_contract.txt",
+    "app202211": ROOT / "contracts" / "app_contract_202211.txt",
+}
 
 cache = SegmentCache(CACHE_DIR)
 engine = GPTSoVITSClient(ENGINE_URL, REF_AUDIO, REF_PROMPT)
