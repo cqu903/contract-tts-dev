@@ -123,20 +123,47 @@ def test_ascii_punct_to_fullwidth():
     assert normalize_for_tts("(如有)") == "（如有）"
 
 
-# --- address lexicon + roman numerals (general, no per-contract data) ---
+# --- English routing + L2 (text_lang=auto_yue era) ---
+# English runs (a >=3-letter Latin word, no CJK around it) are L2-cleaned and left
+# for the engine's English frontend (auto_yue). Numbers/IDs/currency inside CJK
+# context stay Cantonese. The old address->Chinese lexicon is gone.
 
 
-def test_address_words_and_districts_translated():
+def test_address_stays_english_with_l2():
+    # address is NOT lexicon-translated to Chinese; L2 expands structural words and
+    # title-cases so auto_yue reads words, not letters.
     out = normalize_for_tts("FLT 08 39/F BLK 5 TAT YAN BUILDING PO TAT ESTATE KWUN TONG KOWLOON")
-    assert "觀塘" in out and "九龍" in out          # districts
-    assert "室" in out and "座" in out             # FLT->室, BLK->座
-    assert "大廈" in out and "屋邨" in out         # BUILDING->大廈, ESTATE->屋邨
-    assert "三十九樓" in out                       # 39/F -> floor
-    # the structural English is gone; specific unknown names (TAT YAN, PO TAT) stay
-    assert "FLT" not in out and "BLK" not in out and "BUILDING" not in out and "ESTATE" not in out
+    assert "Flat" in out and "Block" in out            # FLT->Flat, BLK->Block
+    assert "39th Floor" in out                         # 39/F -> 39th Floor
+    assert "Tat Yan" in out and "Kwun Tong" in out and "Kowloon" in out
+    # no Chinese district/structural words anymore
+    assert "觀塘" not in out and "九龍" not in out and "大廈" not in out and "屋邨" not in out
+    # digits inside the English run stay numeric (read in English, not 八/五)
+    assert "08" in out and "八" not in out and "五" not in out
 
 
-def test_floor_indicator_to_chinese():
+def test_company_name_titlecased_in_english_run():
+    # all-caps -> title-case so auto_yue reads words instead of letter-spelling
+    out = normalize_for_tts("由ZERO FINANCE HONG KONG LIMITED提供")
+    assert "Zero Finance Hong Kong Limited" in out
+    assert "ZERO" not in out and "FINANCE" not in out
+
+
+def test_mixed_segment_cjk_label_plus_english_name():
+    # CJK label stays Cantonese-normalized; English name L2'd; both coexist (one seg)
+    out = normalize_for_tts("2.貸款人姓名：ZERO FINANCE HONG KONG LIMITED")
+    assert out.startswith("二.貸款人姓名：")           # CJK side: clause "2." -> 二
+    assert "Zero Finance Hong Kong Limited" in out     # English side title-cased
+
+
+def test_english_run_digits_not_chinese():
+    out = normalize_for_tts("FLT 6 15/F BLK 5 KOWLOON")
+    assert "6" in out and "5" in out and "15th Floor" in out
+    assert "六" not in out and "五" not in out
+
+
+def test_floor_indicator_to_chinese_in_cjk_context():
+    # bare 39/F (no English-word context) stays on the Cantonese path
     assert normalize_for_tts("39/F") == "三十九樓"
 
 
@@ -151,9 +178,3 @@ def test_ordinal_roman_after_di_to_chinese():
     assert "第三部" in normalize_for_tts("《放債人條例》第III部撮要")
     assert "第四部" in normalize_for_tts("第IV部條文")
     assert "第三及第四部" in normalize_for_tts("第III及第IV部條文的撮要")
-
-
-def test_company_name_kept_english():
-    # names are left to the model's English pronunciation; lexicon must not touch them
-    out = normalize_for_tts("由ZERO FINANCE HONG KONG LIMITED提供")
-    assert "ZERO FINANCE HONG KONG LIMITED" in out

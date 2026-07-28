@@ -1,12 +1,24 @@
-"""Text normalization for TTS.
+"""Text normalization for TTS (engine text_lang=auto_yue).
 
-GPT-SoVITS's number frontend mishandles comma-grouped Arabic numerals
-(e.g. "2,864,000" is read as "28640"). We pre-convert amounts / dates /
-percentages / quantities into Chinese before sending to the engine.
+The engine's auto_yue frontend switches per-token Cantonese<->English, so we no
+longer translate English addresses/names to Chinese. Instead we:
 
-The text shown to the user stays original (Arabic digits); only the text
-fed to the engine is normalized. Output numerals are simplified-form
-(万) — Cantonese g2p reads 万 and 萬 identically, so this is fine for speech.
+  * L2-clean English runs (a maximal ASCII run containing a >=3-letter Latin word)
+    so auto_yue reads them as WORDS, not letter-spells: expand structural
+    abbreviations (FLT->Flat, BLK->Block, 39/F->39th Floor) and title-case
+    ALL-CAPS words (ZERO->Zero). Digits inside an English run stay numeric
+    (read in English).
+  * Keep the Cantonese normalization for the CJK-context remainder -- amounts /
+    dates / IDs / accounts / times / roman numerals -- because GPT-SoVITS
+    mishandles comma-grouped Arabic numerals (e.g. "2,864,000" -> "28640").
+
+English runs are stashed as Private-Use-Area chars so the CJK rules see the
+remainder as one contiguous string (date rules like 2026年8月1日 need the CJK
+delimiters adjacent to the digits, which a naive ASCII/CJK split would break).
+
+The text shown to the user stays original (Arabic digits); only the engine-bound
+text is normalized. Output numerals are simplified-form (万) -- Cantonese g2p
+reads 万 and 萬 identically.
 """
 from __future__ import annotations
 import re
@@ -14,6 +26,8 @@ from cn2an import an2cn
 
 _DIGIT_CN = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
              "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+
+_PUA_BASE = 0xE000  # Private Use Area start; placeholders for stashed English runs
 
 
 def _digits_to_cn(s: str) -> str:
@@ -42,43 +56,38 @@ def _int_to_cn(int_part: str) -> str:
         return _digits_to_cn(int_part)
 
 
-# General HK address lexicon -- reusable across contracts, NOT per-contract
-# data. Districts, common areas, and structural address words. Company and
-# person names are deliberately excluded: they vary per contract and are left
-# to the model's English pronunciation.
-_ADDRESS_LEXICON = {
-    # Kowloon
-    "kowloon city": "九龍城", "kowloon tong": "九龍塘", "kowloon bay": "九龍灣",
-    "kwun tong": "觀塘", "wong tai sin": "黃大仙", "sham shui po": "深水埗",
-    "yau tsim mong": "油尖旺", "tsim sha tsui": "尖沙咀", "mong kok": "旺角",
-    "hung hom": "紅磡", "kowloon": "九龍",
-    # Hong Kong Island
-    "central and western": "中西區", "wan chai": "灣仔", "causeway bay": "銅鑼灣",
-    "admiralty": "金鐘", "central": "中環", "north point": "北角",
-    # New Territories
-    "tsuen wan": "荃灣", "tuen mun": "屯門", "yuen long": "元朗",
-    "tai po": "大埔", "sha tin": "沙田", "sai kung": "西貢",
-    "tseung kwan o": "將軍澳", "kwai chung": "葵涌", "kwai tsing": "葵青",
-    "ma on shan": "馬鞍山",
-    # structural address words (English reads poorly or gets letter-spelled)
-    "building": "大廈", "estate": "屋邨", "block": "座", "blk": "座",
-    "flat": "室", "flt": "室",
+# --- L2: English-run cleanup (for the engine's auto_yue English frontend) ---
+
+# Structural abbreviations the English g2p would letter-spell -> expand to words.
+# Keys are 3 letters so they never collide with the full words they map to.
+_L2_ABBREV = {
+    "flt": "Flat",
+    "blk": "Block",
 }
 
-# Roman numerals -> Chinese. Length>=2 forms are used for parenthesized list
-# markers (single (i)/(v)/(x) are ambiguous with letter markers a/b/c…); the
-# full set (incl. singles) is used after 第, where it's unambiguously ordinal.
 _ROMAN_TO_CN = {"i": "一", "ii": "二", "iii": "三", "iv": "四", "v": "五",
                 "vi": "六", "vii": "七", "viii": "八", "ix": "九", "x": "十",
                 "xi": "十一", "xii": "十二", "xiii": "十三", "xiv": "十四", "xv": "十五"}
 
 
-def _apply_lexicon(text: str, lexicon: dict[str, str]) -> str:
-    """Case-insensitive, whole-phrase replacement, longest phrases first (so
-    'Kowloon City' wins over 'Kowloon'). Internal whitespace is flexible."""
-    for phrase in sorted(lexicon, key=len, reverse=True):
-        pat = r"\b" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"\b"
-        text = re.sub(pat, lexicon[phrase], text, flags=re.IGNORECASE)
+def _ordinal(n: int) -> str:
+    """1->1st, 2->2nd, 3->3rd, 4->4th, 11->11th, 12->12th, 39->39th."""
+    if 10 <= n % 100 <= 20:
+        suf = "th"
+    else:
+        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+def _l2_english(text: str) -> str:
+    """Clean an English run for auto_yue: expand structural abbreviations,
+    39/F -> Nth Floor, and title-case ALL-CAPS words. Digits are left intact
+    (read in English, not converted to Chinese)."""
+    for ab, full in _L2_ABBREV.items():
+        text = re.sub(r"\b" + ab + r"\b", full, text, flags=re.IGNORECASE)
+    text = re.sub(r"(\d+)\s*/?\s*[Ff](?![A-Za-z])",
+                  lambda m: _ordinal(int(m.group(1))) + " Floor", text)
+    text = re.sub(r"\b[A-Z]{2,}\b", lambda m: m.group(0).capitalize(), text)
     return text
 
 
@@ -87,24 +96,15 @@ def _roman_repl(m: re.Match) -> str:
     return "（" + cn + "）" if cn else m.group(0)
 
 
-def normalize_for_tts(text: str) -> str:
-    # 0) strip PDF control chars (keep tab/newline); unify $ / HK$ -> 港幣 (HK context)
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    text = re.sub(r'(HK)?[$＄]', '港幣', text)
-    text = re.sub(r'港幣港幣', '港幣', text)
-
-    # 0.5) address lexicon (districts + structural words), floor indicator, and
-    # roman list markers. Runs before the number rules so 39/F is handled cleanly.
-    # Names / companies are untouched (model reads them with English pronunciation).
-    text = _apply_lexicon(text, _ADDRESS_LEXICON)
-    # 39/F -> 三十九樓 (convert the digit to Chinese here so later number rules
-    # don't space-join it with an adjacent flat number like 08)
+def _normalize_cjk_context(text: str) -> str:
+    """Cantonese normalization for the CJK-context remainder (everything that is
+    NOT a stashed English run): the number / currency / date / ID rules.
+    Address lexicon is gone -- English runs handle addresses now. Roman markers
+    are converted earlier (pre-pass) so a >=3-letter roman like III isn't stashed
+    as an English run."""
+    # 39/F -> 三十九樓 (only reaches here when not inside an English run)
     text = re.sub(r'(\d+)\s*/?\s*[Ff](?![A-Za-z])',
                   lambda m: _num_to_cn(m.group(1)) + "樓", text)
-    text = re.sub(r'[（(]([ivxlcdm]{2,})[）)]', _roman_repl, text, flags=re.IGNORECASE)
-    text = re.sub(r'第([ivxlcdm]+)',                # 第III部 -> 第三部 (ordinal)
-                  lambda m: "第" + _ROMAN_TO_CN.get(m.group(1).lower(), m.group(1)),
-                  text, flags=re.IGNORECASE)
 
     # Reference numbers read DIGIT-BY-DIGIT, not as cardinals. In this HK contract
     # every amount is comma-grouped or currency-prefixed, so "no comma + no
@@ -139,4 +139,43 @@ def normalize_for_tts(text: str) -> str:
     text = re.sub(r'\d[\d,]*(?:\.\d+)?', lambda m: _num_to_cn(m.group(0)), text)
     # 9) ASCII punctuation -> fullwidth (engine reads these more naturally)
     text = text.replace('(', '（').replace(')', '）').replace(';', '；').replace(':', '：').replace('/', '、')
+    return text
+
+
+def normalize_for_tts(text: str) -> str:
+    # 0) global pre-pass: strip PDF control chars; unify $ / HK$ -> 港幣 (HK context)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = re.sub(r'(HK)?[$＄]', '港幣', text)
+    text = re.sub(r'港幣港幣', '港幣', text)
+
+    # 0.4) roman list markers (ii)/(iii)/... and 第III部 ordinals -> Chinese. Runs
+    # BEFORE stashing so a >=3-letter roman (III, VII...) isn't swept into an
+    # English run and title-cased. These markers only occur in CJK context (第 /
+    # fullwidth parens), so converting them early is safe.
+    text = re.sub(r'[（(]([ivxlcdm]{2,})[）)]', _roman_repl, text, flags=re.IGNORECASE)
+    text = re.sub(r'第([ivxlcdm]+)',
+                  lambda m: "第" + _ROMAN_TO_CN.get(m.group(1).lower(), m.group(1)),
+                  text, flags=re.IGNORECASE)
+
+    # 0.5) stash English runs (ASCII runs containing a >=3-letter Latin word) as
+    # Private-Use-Area placeholders so the CJK rules see an intact remainder.
+    # ASCII runs without an English word (digits/codes/punct, e.g. 126,000 or
+    # XR-7200) stay in place for the Cantonese number rules.
+    stash: list[str] = []
+
+    def _maybe_stash(m: re.Match) -> str:
+        chunk = m.group(0)
+        if re.search(r'[A-Za-z]{3,}', chunk):
+            stash.append(_l2_english(chunk))
+            return chr(_PUA_BASE + len(stash) - 1)
+        return chunk
+
+    text = re.sub(r'[\x20-\x7e]+', _maybe_stash, text)
+
+    # 1) Cantonese normalization on the CJK-context remainder
+    text = _normalize_cjk_context(text)
+
+    # 2) restore English runs
+    for i, eng in enumerate(stash):
+        text = text.replace(chr(_PUA_BASE + i), eng)
     return text

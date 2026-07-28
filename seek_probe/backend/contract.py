@@ -8,7 +8,7 @@ from seek_probe.backend.segmenter import split_contract, estimate_duration
 _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 _CONTRACT_FILES = {
     "sample": _CONTRACTS_DIR / "sample_contract.txt",
-    "app202211": _CONTRACTS_DIR / "app_contract_202211.txt",
+    "zacl0603": _CONTRACTS_DIR / "zacl0603.txt",
 }
 
 

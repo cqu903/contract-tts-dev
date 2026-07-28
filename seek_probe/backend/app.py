@@ -28,7 +28,7 @@ VOICE_REF_ID = "cantonese_ref_v1"
 
 _CONTRACT_FILES = {
     "sample": ROOT / "contracts" / "sample_contract.txt",
-    "app202211": ROOT / "contracts" / "app_contract_202211.txt",
+    "zacl0603": ROOT / "contracts" / "zacl0603.txt",
 }
 
 cache = SegmentCache(CACHE_DIR)

@@ -4,7 +4,7 @@
 
 ## 0. 一句话
 
-浏览器拖动合同进度条 → 后端把"位置"映射到第 N 段 → 命中缓存就直接放文件;未命中则把该段文本**归一化(数字/金额/日期/型号 → 中文)**后调本地 GPT-SoVITS(粤语 `yue`)生成、落缓存、回传。所有段共用一段固定参考音色 → 任意 seek 顺序、缓存与否,前后音色一致。
+浏览器拖动合同进度条 → 后端把"位置"映射到第 N 段 → 命中缓存就直接放文件;未命中则把该段文本**归一化**(中文语境的数字/金额/日期/型号 → 粤语中文;英文地址/公司名 → L2 清洗后保留英文,由 `yue` 前端读成词)后调本地 GPT-SoVITS(粤语 `yue`)生成、落缓存、回传。所有段共用一段固定参考音色 → 任意 seek 顺序、缓存与否,前后音色一致。
 
 ## 1. 拓扑(两进程 + 磁盘缓存 + 浏览器)
 
@@ -50,7 +50,7 @@
 
 ## 3. seek 逻辑(`contract.py` / `segmenter.py` / 前端 `app.js`)
 
-1. **分句**(`segmenter.split_contract(text, max_chars=60)`):按句末标点 `。！？；` 切,过长句再按 `，、` 子切。**确定性**——同文本永远同分段(缓存键稳定的前提)。
+1. **分句**(`segmenter.split_contract(text, target=20, soft_max=45, hard_max=50)`):硬边界为句末标点 `。！？；` 与换行;行内长句先按 `，、;` 子切,仍超 `hard_max` 再按 `：（《(` 拆;短碎片向 `target` 合并、封顶 `soft_max`;≤1 字的孤碎片折回前段。**确定性**——同文本永远同分段(缓存键稳定的前提)。
 2. **段索引**(`contract.build_index(contract_id, text)`):每段 `{seg_idx, text, est_dur_s, cumulative_start_s}`,总和 `total_est_s`。`est_dur_s` 按字数 ÷ 3.7 字/秒估算。
 3. **进度条**:前端把一个 `range(0..1000)` 映射到 `[0, total_est_s]`,**音频还没生成就能拖**(连续流式给不了的可拖动时间轴)。
 4. **位置→段**(`contract.position_to_segment(idx, t)` / 前端 `segmentAtSeconds`):找 `cumulative_start_s ≤ t < 下一段`。**seek 吸附段边界**——拖到一段中间也从该段头播(段很短 ~5–13s,合同场景可接受;省掉子段精确 seek)。
@@ -74,43 +74,99 @@
 
 ## 6. 文本归一化(关键一层,`normalizer.py`,依赖 `cn2an`)
 
-GPT-SoVITS 的数字前端不稳:`2,864,000` 会被读成 `28640`(尾零+千分位逗号丢)。所以**显示文本保持原始阿拉伯数字(给客户看),只把喂给 TTS 的文本预先转中文**。规则(按顺序):
+显示文本保持原始(给客户看);只改喂给 TTS 的文本。核心是**按语言分流**:
+
+**英文片段(含 ≥3 字母英文单词、且无 CJK 的极大片段)** → L2 清洗后**保留英文**,由 `yue` 前端读成词(不转中文):
+- 全大写 → 首字母大写(`ZERO FINANCE → Zero Finance`),否则 yue 前端会逐字母读。
+- 结构缩写展开:`FLT→Flat`、`BLK→Block`、`39/F→39th Floor`(英文 g2p 不认缩写,会逐字母)。
+- **数字不转中文**(地址里的 `08/39/5` 跟着英文读)。
+
+**其余(中文语境)** → 粤语归一化(GPT-SoVITS 数字前端不稳,`2,864,000` 会被读成 `28640`):
 
 | 输入 | 归一化为 | 例 |
 |---|---|---|
 | `N%` | `百分之<N中文>` | `5.25% → 百分之五點二五`;`0.5% → 百分之零點五` |
 | `YYYY年M月D日` | 年逐位 + 月/日数值 | `2026年8月15日 → 二零二六年八月十五日` |
-| `YYYY年` | 逐位 | `2026年 → 二零二六年` |
-| `M月` / `D日` | 数值 | `8月 → 八月`;`30日 → 三十日` |
-| 拉丁字母+连字符+数字(型号/编号) | **逐位** | `XR-7200 → XR-七二零零`(不是"七千二百") |
-| 其余裸数字(金额/数量/时长) | 数值(cn2an) | `2,864,000元 → 二百八十六万四千元`;`12,000件 → 一万二千件` |
+| `YYYY年` / `M月` / `D日` | 逐位 / 数值 | `2026年 → 二零二六年`;`8月 → 八月` |
+| `HH:MM` | `H時M分` | `23:31 → 二十三時三十一分` |
+| `D/M/YYYY` | `YYYY年M月D日` | `28/08/2024 → 二零二四年八月二十八日` |
+| 分隔符数字串(电话/账号/牌照) | **逐位** | `024-363-529959882 → 零二四…`;`0954/2024 → 零九五四…` |
+| 裸 ≥6 位(非金额) | 逐位 | `25310333 → 二五三一…`(身份证/电话,非基数) |
+| 拉丁字母+数字(型号) | 字母+逐位 | `XR-7200 → XR-七二零零`;`A100 → A一零零` |
+| `HK$ / $` 金额 | `港幣<基数>` | `HK$126,000.00 → 港幣十二万六千`(尾零 drop) |
+| 其余裸数字(金额/数量) | 数值(cn2an) | `12,000件 → 一万二千件` |
+| 罗马序号 | 中文 | `第III部 → 第三部`;`(ii) →（二）` |
 | 已是中文数字 | 不变 | `百分之二十`、`叁佰伍拾捌萬` 原样 |
+
+**实现**(`normalize_for_tts`):全局预处理(剥控制字符、`HK$→港幣`、罗马序号)→ 把英文片段替换成 Private-Use-Area 占位符 → 对中文余部跑上表规则(日期 `2026年8月1日` 需 CJK 分隔符相邻,故不能简单按 ASCII/CJK 切)→ 还原英文片段。
+
+> **为什么 `text_lang=yue` 而非 `auto_yue`**:实测 `auto_yue` 会把英文公司名**之后**的 CJK 误判成日语(共享汉字 zh/ja 歧义)。`yue` + L2 首字母大写即可让英文被读成词(不逐字母),且 CJK 永远粤语。所以用确定性 `yue`,不用会"猜语言"的 `auto_yue`。
 
 ## 7. 关键文件地图
 
 | 文件 | 职责 |
 |---|---|
-| `seek_probe/backend/segmenter.py` | `split_contract`、`estimate_duration`、`Segment` |
-| `seek_probe/backend/contract.py` | `build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment` |
+| `seek_probe/backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
+| `seek_probe/backend/contract.py` | `build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`_CONTRACT_FILES` |
 | `seek_probe/backend/cache.py` | `cache_key`、`SegmentCache`(has/get/put + manifest) |
-| `seek_probe/backend/normalizer.py` | `normalize_for_tts`(数字/金额/日期/型号 → 中文) |
-| `seek_probe/backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`trust_env=False`) |
-| `seek_probe/backend/app.py` | FastAPI:`/api/contract`、`/api/segment`、`/api/preload`、静态 `/` |
-| `seek_probe/frontend/{index.html,app.js}` | 进度条 + 播放/seek/预载 |
-| `seek_probe/contracts/sample_contract.txt` | 合同语料(书面中文,含数字/金额/日期) |
+| `seek_probe/backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
+| `seek_probe/backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`) |
+| `seek_probe/backend/app.py` | FastAPI:`/api/contract`、`/api/segment`、`/api/preload`、静态 `/`;`_CONTRACT_FILES` |
+| `seek_probe/frontend/{index.html,app.js}` | 进度条 + 播放/seek/预载 + `?contract=` 选择器 |
+| `seek_probe/scripts/convert_contract_pdf.py` | **PDF→txt 转换器**:剥页眉页脚、行级 (y,x) 排序、y 间距合并、CJK 空格折叠 |
+| `seek_probe/scripts/audit_reading_order.py` | **阅读顺序审计**:对比 sort vs native,标出顺序不一致的页 |
+| `seek_probe/contracts/zacl0603.txt` | 当前合同语料(从 PDF 转换 + 手工校正,gitignored) |
+| `seek_probe/contracts/sample_contract.txt` | 示例合同(书面中文) |
 | `seek_probe/refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、gitignored) |
 
-## 8. 约束与后续
+## 8. 添加新合同 + 工具速查(换合同模板时照这个走)
+
+```
+1. 转换 PDF → txt(剥页眉页脚 + 行级阅读顺序):
+   uv run python -m seek_probe.scripts.convert_contract_pdf \
+       ~/Downloads/<新合同>.pdf -o seek_probe/contracts/<id>.txt
+   # 看输出 "residual headers/footers" 应为 0;不为 0 说明页眉页脚模式不匹配,
+   # 需在 convert_contract_pdf.DEFAULT_HEADER_PATTERNS / DEFAULT_FOOTER_PATTERNS 加模式。
+
+2. 审计阅读顺序(标出 sort 与 native 不一致的页,只复核这些):
+   uv run python -m seek_probe.scripts.audit_reading_order \
+       ~/Downloads/<新合同>.pdf -o seek_probe/verify/audit.md
+   # 打开 audit.md,对每个被标页对照 sort/native 两版,把读起来对的文本 patch 进 <id>.txt。
+   # (两列布局用 native 对;行式表单用 sort 对;侧栏填空两种都可能要手工拼。)
+   # ⚠️ patch 后别再重跑步骤 1(会覆盖手工校正)。
+
+3. 注册合同:在 app.py 和 contract.py 的 _CONTRACT_FILES 各加一行 "<id>": .../contracts/<id>.txt。
+
+4. 清缓存(归一化/分段变了,旧 wav 是孤儿):rm -f seek_probe/cache/*.wav
+
+5. 抽测:跑 build_index 看 segment 数/中位长度;对地址段、公司名段、金额段各 normalize_for_tts
+   一次,确认英文 L2、金额粤语、身份证逐位。
+```
+
+**工具速查**:
+
+| 要做什么 | 用什么 |
+|---|---|
+| PDF 转成可读 txt(剥页眉页脚、重排阅读顺序) | `convert_contract_pdf.py` |
+| 找出转换后哪些页阅读顺序可能有错 | `audit_reading_order.py` |
+| 看某段会送什么文本给引擎 | `normalize_for_tts(seg.text)` 或 `zacl0603.normalized.txt` dump |
+| 改完归一化/分段后清旧音频 | `rm seek_probe/cache/*.wav`(key 按归一化文本算,自动重生成) |
+| 跑测试 | `uv run pytest -q` |
+
+## 9. 约束与后续
 
 - **参考音频必须 3–10 秒**(GPT-SoVITS 硬规则);当前用 `cantonese_ref_trim.wav`(7s)。
 - `streaming_mode=False`:每段返回整段 WAV。冷 seek 延迟 ≈ 该段生成时间(M3 Max CPU RTF≈0.4,短段 ~1s);靠 §3 的预载 + §4 的缓存掩盖。
 - `httpx trust_env=False`:本机有 clash 代理(`http_proxy=:7897`),否则 127.0.0.1 走代理 → 502。
 - **含拉丁字母的文本**:触发 NLTK 英文前端,需 `~/nltk_data`(见 `engine-setup.md` 踩坑 #7)。
-- **地区口音(HK/GZ)**:GPT-SoVITS 只有单一 `yue`(Jyutping),无地区开关;换参考音只改音色、不改发音。要 HK/GZ 切换,最实际是"地区 → 对应参考音"映射(音色层)。
-- **长文(1 小时)**:本架构直接适用——1h ≈ 更多分段;静态内容靠 §4 内容寻址自动复用;整体可后台预生成后交付(见 spec §10)。
+- **PDF 阅读顺序**:行级 `(y,x)` 排序对行式表单/内联金额正确;但对"两列 label/value"会错(见 §8 步骤 2 审计)。转换器是半自动——复杂布局靠审计 + 手工 patch `.txt`。换模板务必跑审计。
+- **地区口音(HK/GZ)**:GPT-SoVITS 只有单一 `yue`(Jyutping),无地区开关;换参考音只改音色、不改发音。
+- **长文(1 小时)**:本架构直接适用——1h ≈ 更多分段;静态内容靠 §4 内容寻址自动复用。
 
-## 9. 与 spec 的差异(代码为准)
+## 10. 与 spec 的差异(代码为准)
 
 1. **TTS 回传**:spec 写"tee 流式 `StreamingResponse`";实际为"生成后响应 `Response` + 失败回 502/500"(为暴露引擎错误)。
-2. **新增归一化层** `normalizer.py`(spec 未含),TTS 路径多一道 `normalize_for_tts`;缓存键基于**归一化后**的文本。
-3. 缓存键由"段文本"改为"归一化段文本";`load_contract_text` 在 `contract.py` 定义但 `app.py` 用自带的 `_resolve_contract`(测试可注入),前者未被使用。
+2. **归一化层** `normalizer.py`(spec 未含):中文语境数字/金额/日期 → 粤语中文;英文地址/公司名 → L2 清洗保留英文(首字母大写 + 缩写展开)。缓存键基于**归一化后**的文本。
+3. **`text_lang=yue` + L2**(非 spec 期决定):曾试 `auto_yue`(引擎自动切中英),实测会把英文后的 CJK 误读成日语 → 退回 `yue` + L2。
+4. **PDF→txt 转换器 + 阅读顺序审计**(`scripts/`,spec 未含):合同源从手头 PDF 转换,剥页眉页脚、行级排序;审计工具标出顺序歧义页。
+5. 缓存键由"段文本"改为"归一化段文本";`load_contract_text` 在 `contract.py` 定义但 `app.py` 用自带的 `_resolve_contract`(测试可注入),前者未被使用。
