@@ -2,6 +2,7 @@
 seek mapping. Static frontend served at /."""
 from __future__ import annotations
 import asyncio
+import os
 from pathlib import Path
 
 import httpx
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from seek_probe.backend.contract import build_index
 from seek_probe.backend.cache import cache_key, SegmentCache
 from seek_probe.backend.gptsovits_client import GPTSoVITSClient
+from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 from seek_probe.backend.normalizer import normalize_for_tts
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,13 +28,32 @@ REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-
     if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
 VOICE_REF_ID = "cantonese_ref_v1"
 
+# --- engine selection ---
+# Both clients share the synth(text) -> AsyncIterator[bytes] contract; normalization
+# stays at the app layer (shared normalizer.py), so swapping engines needs no other change.
+# SEEK_PROBE_ENGINE = "gptsovits" (local, default) | "bailian" (cloud cosyvoice).
+ENGINE_NAME = os.getenv("SEEK_PROBE_ENGINE", "gptsovits")
+BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # native Cantonese (粤语/英文)
+
+
+def make_engine(name: str | None = None):
+    """Build the TTS engine. name=None -> read SEEK_PROBE_ENGINE env (default gptsovits)."""
+    name = name or ENGINE_NAME
+    if name == "bailian":
+        return BailianCosyVoiceClient(
+            api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+            voice=BAILIAN_VOICE,
+        )
+    return GPTSoVITSClient(ENGINE_URL, REF_AUDIO, REF_PROMPT)
+
+
 _CONTRACT_FILES = {
     "sample": ROOT / "contracts" / "sample_contract.txt",
     "zacl0603": ROOT / "contracts" / "zacl0603.txt",
 }
 
 cache = SegmentCache(CACHE_DIR)
-engine = GPTSoVITSClient(ENGINE_URL, REF_AUDIO, REF_PROMPT)
+engine = make_engine()
 
 app = FastAPI(title="Cantonese Contract TTS Seek Probe")
 

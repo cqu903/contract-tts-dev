@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 import seek_probe.backend.app as appmod
 from seek_probe.backend.cache import SegmentCache
+from seek_probe.backend.gptsovits_client import GPTSoVITSClient
+from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 
 
 class FakeEngine:
@@ -58,3 +60,15 @@ def test_preload_warms_cache_without_blocking(tmp_path, monkeypatch):
     calls_before = fake.calls
     client.get("/api/segment/sample/1")
     assert fake.calls == calls_before
+
+
+def test_make_engine_bailian_reads_api_key_and_default_voice(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-x")
+    e = appmod.make_engine("bailian")
+    assert isinstance(e, BailianCosyVoiceClient)
+    assert e.api_key == "sk-x"
+    assert e.voice == "longjiaxin_v3"   # native Cantonese voice (粤语/英文)
+
+
+def test_make_engine_defaults_to_gptsovits():
+    assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
