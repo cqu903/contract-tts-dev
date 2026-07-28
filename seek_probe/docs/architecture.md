@@ -72,7 +72,7 @@
 - **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。这样引擎失败能回明确错误(`httpx.HTTPStatusError → 502`,其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
 - **音色一致**:所有段共用 `REF_AUDIO = refs/cantonese_ref_trim.wav`(7s)+ `VOICE_REF_ID`。固定参考 = 任意 seek 顺序、缓存命中或新生成,都是同一个人声。
 - **引擎可切换**(`app.make_engine`,`SEEK_PROBE_ENGINE` env):默认 `gptsovits`(本地,如上);`SEEK_PROBE_ENGINE=bailian` 切云端 `cosyvoice-v3-flash` + 原生粤语音色(`BAILIAN_VOICE`,默认 `longjiaxin_v3`)。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用,只换引擎不动其它。
-  - 云端 client(`bailian_cosyvoice_client.py`)是两步:POST `SpeechSynthesizer` 拿 JSON 里的 audio url → GET 下载流式字节;`trust_env=False` 绕代理;`DASHSCOPE_API_KEY` 必须设。云端引擎**不需参考音**(用系统音色),音色一致由固定 `voice` 保证。
+  - 云端 client(`bailian_cosyvoice_client.py`)是两步:POST `SpeechSynthesizer` 拿 JSON 里的 audio url → GET 下载流式字节;`trust_env=False` 绕代理;`DASHSCOPE_API_KEY` 必须设。云端引擎**不需参考音**(用系统音色),音色一致由固定 `voice` 保证。速率/音调走 API 默认(`rate=1.0`、`pitch=1.0`);cosyvoice HTTP API 支持 `input.rate/pitch/volume`,需要正式节奏时可扩展(未接)。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构(normalizer→引擎)。
 
 ## 6. 文本归一化(关键一层,`normalizer.py`,依赖 `cn2an`)

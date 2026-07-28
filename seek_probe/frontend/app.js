@@ -1,4 +1,4 @@
-const CONTRACT_ID = new URLSearchParams(location.search).get("contract") || "sample";
+const CONTRACT_ID = new URLSearchParams(location.search).get("contract") || "zacl0603";
 const PRELOAD_AHEAD = 3;
 
 const bar = document.getElementById("bar");

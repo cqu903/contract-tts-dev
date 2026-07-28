@@ -8,6 +8,8 @@
 
 ## 運行
 
+### A. 本地 GPT-SoVITS 引擎(默認)
+
 1. 引擎(獨立終端;見 `docs/engine-setup.md` 安裝步驟):
    ```
    cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py   # 監聽 :9880
@@ -17,7 +19,19 @@
    ```
    uv run uvicorn seek_probe.backend.app:app --port 8000 --reload
    ```
-4. 打開 http://127.0.0.1:8000/?contract=zacl0603 ,拖動進度條測試(`?contract=` 切換合同)。
+
+### B. 雲端 Bailian CosyVoice 引擎(無需本地引擎 / 參考音)
+
+用 `SEEK_PROBE_ENGINE=bailian` 切換;音色 `BAILIAN_VOICE`(默認 `longjiaxin_v3` 原生粵語女,亦可 `longjiayi_v3` / `longanyue_v3` 粵語男)。需先設 `DASHSCOPE_API_KEY`。
+   ```
+   SEEK_PROBE_ENGINE=bailian uv run uvicorn seek_probe.backend.app:app --port 8000
+   ```
+> 引擎可熱切:兩個 client 的 `synth(text)->AsyncIterator[bytes]` 同構,歸一化 / seek / 緩存全部共用。**注意緩存鍵不含引擎名**——本地↔雲端切換前先 `rm -f seek_probe/cache/*.wav`,否則會命中舊引擎的音頻。
+> **TN 邊界**:雲端 cosyvoice 自動 TN 只覆蓋日期 / 基礎金額;逐位(電話 / 身份證 / 型號)、`HK$→港幣`、羅馬序號仍靠 `normalizer.py`——雲端路徑**不能省歸一化層**。
+
+### 打開
+
+http://127.0.0.1:8000 —— 默認合同 `zacl0603`(真實 Zero Finance 貸款協議,659 段 ≈85 min);`?contract=sample` 切樣例,`?contract=` 切其它已註冊合同。拖動進度條測試。
 
 ## 添加新合同 / 工具速查
 
