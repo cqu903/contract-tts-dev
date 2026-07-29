@@ -178,3 +178,31 @@ def test_ordinal_roman_after_di_to_chinese():
     assert "第三部" in normalize_for_tts("《放債人條例》第III部撮要")
     assert "第四部" in normalize_for_tts("第IV部條文")
     assert "第三及第四部" in normalize_for_tts("第III及第IV部條文的撮要")
+
+
+# --- polyphone fix: 還 waan4 -> homophone 環 (engine reads it haan4) ---
+
+def test_waan4_words_to_homophone():
+    assert normalize_for_tts("全數償還本金") == "全數償環本金"
+    assert normalize_for_tts("每期還款額") == "每期環款額"
+    assert normalize_for_tts("退還利息") == "退環利息"
+    assert normalize_for_tts("全數清還欠帳") == "全數清環欠帳"
+    # adjacent words both replaced: 償還還款 -> 償環環款
+    assert normalize_for_tts("償還還款當日") == "償環環款當日"
+
+
+def test_haan4_words_untouched():
+    # 還是/還有 are haan4 — must NOT be swapped to the waan4 homophone
+    assert "還是" in normalize_for_tts("還是")
+    assert "還有" in normalize_for_tts("還有")
+
+
+# --- 注： token makes the engine misread the next word -> comma ---
+
+def test_zhu_colon_to_comma():
+    # probe (2026-07): 注：港幣 misreads 港幣; 注， / 注。 / 金額：港幣 all fine.
+    # The trigger is the 注： token itself, not the colon character.
+    assert normalize_for_tts("注：HK$26,000.00之首次") == "注，港幣二万六千之首次"
+    assert normalize_for_tts("註：借款人") == "註，借款人"
+    # other labels keep their colon untouched
+    assert "金額：" in normalize_for_tts("金額：港幣五千")

@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from seek_probe.backend.contract import build_index
+from seek_probe.backend.contract import build_index, dump_segments
 from seek_probe.backend.cache import cache_key, SegmentCache
 from seek_probe.backend.gptsovits_client import GPTSoVITSClient
 from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
@@ -50,7 +50,20 @@ def make_engine(name: str | None = None):
 _CONTRACT_FILES = {
     "sample": ROOT / "contracts" / "sample_contract.txt",
     "zacl0603": ROOT / "contracts" / "zacl0603.txt",
+    "xcash": ROOT / "contracts" / "xcash.txt",
 }
+
+# SEEK_PROBE_DUMP_SEGMENTS=1: at startup, dump each registered contract's raw
+# segmentation to contracts/<id>.segments.txt (verbatim segmenter output, for
+# inspection and tuning). Off by default; no effect on serving.
+if os.getenv("SEEK_PROBE_DUMP_SEGMENTS") == "1":
+    for _cid, _path in _CONTRACT_FILES.items():
+        if not _path.exists():
+            print(f"[dump_segments] skip missing contract file: {_path}", flush=True)
+            continue
+        _out = dump_segments(build_index(_cid, _path.read_text(encoding="utf-8")),
+                             _path.with_suffix(".segments.txt"))
+        print(f"[dump_segments] {_cid} -> {_out}", flush=True)
 
 cache = SegmentCache(CACHE_DIR)
 engine = make_engine()

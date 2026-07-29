@@ -16,6 +16,10 @@ English runs are stashed as Private-Use-Area chars so the CJK rules see the
 remainder as one contiguous string (date rules like 2026年8月1日 need the CJK
 delimiters adjacent to the digits, which a naive ASCII/CJK split would break).
 
+Also fixes the 還 polyphone: the cosyvoice Cantonese frontend reads it haan4
+("hái") even in waan4 (repay) words, so 償還/清還/退還/歸還/還款 are swapped to
+homophones (償環/環款/...) in the engine-bound text.
+
 The text shown to the user stays original (Arabic digits); only the engine-bound
 text is normalized. Output numerals are simplified-form (万) -- Cantonese g2p
 reads 万 and 萬 identically.
@@ -68,6 +72,13 @@ _L2_ABBREV = {
 _ROMAN_TO_CN = {"i": "一", "ii": "二", "iii": "三", "iv": "四", "v": "五",
                 "vi": "六", "vii": "七", "viii": "八", "ix": "九", "x": "十",
                 "xi": "十一", "xii": "十二", "xiii": "十三", "xiv": "十四", "xv": "十五"}
+
+# Polyphone fix (engine-bound text only): the cosyvoice Cantonese frontend
+# misreads 還 as haan4 ("hái") even in waan4 (repay/return) words — verified
+# 2026-07 by A/B synth: 償還 and 償環 produce byte-different audio. Swap the
+# waan4 words for homophones. haan4 words (還是/還有) are deliberately absent.
+_WAAN4_HOMOPHONES = {"償還": "償環", "清還": "清環", "退還": "退環",
+                     "歸還": "歸環", "還款": "環款"}
 
 
 def _ordinal(n: int) -> str:
@@ -143,10 +154,19 @@ def _normalize_cjk_context(text: str) -> str:
 
 
 def normalize_for_tts(text: str) -> str:
-    # 0) global pre-pass: strip PDF control chars; unify $ / HK$ -> 港幣 (HK context)
+    # 0) global pre-pass: strip control chars; unify $ / HK$ -> 港幣 (HK context)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     text = re.sub(r'(HK)?[$＄]', '港幣', text)
     text = re.sub(r'港幣港幣', '港幣', text)
+
+    # 0.3) polyphone fix: waan4 words -> homophones (engine misreads 還 as haan4)
+    for word, homophone in _WAAN4_HOMOPHONES.items():
+        text = text.replace(word, homophone)
+
+    # 0.35) 注：/註： makes the engine misread the following word (verified:
+    # 注：港幣 misreads 港幣, while 注，/注。/金額：港幣 all read correctly —
+    # the trigger is the 注： token, not the colon). Use a comma instead.
+    text = text.replace("注：", "注，").replace("註：", "註，")
 
     # 0.4) roman list markers (ii)/(iii)/... and 第III部 ordinals -> Chinese. Runs
     # BEFORE stashing so a >=3-letter roman (III, VII...) isn't swept into an

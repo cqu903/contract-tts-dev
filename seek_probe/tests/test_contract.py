@@ -1,5 +1,5 @@
 import pytest
-from seek_probe.backend.contract import build_index, position_to_segment
+from seek_probe.backend.contract import build_index, dump_segments, position_to_segment
 
 
 def test_index_cumulative_starts_monotonic_and_total_matches():
@@ -20,3 +20,12 @@ def test_position_to_segment_bounds_and_boundary():
     assert position_to_segment(idx, idx.total_est_s + 99) == len(idx.segments) - 1
     # negative clamps to 0
     assert position_to_segment(idx, -5) == 0
+
+
+def test_dump_segments_verbatim(tmp_path):
+    idx = build_index("c", "第一句。第二句！")
+    out = dump_segments(idx, tmp_path / "c.segments.txt")
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("# c: 2 segments")
+    # every segment text appears verbatim, one per line, in order
+    assert [line.split(") ", 1)[1] for line in lines[1:]] == [m.text for m in idx.segments]

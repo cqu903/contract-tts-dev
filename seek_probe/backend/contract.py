@@ -9,6 +9,7 @@ _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 _CONTRACT_FILES = {
     "sample": _CONTRACTS_DIR / "sample_contract.txt",
     "zacl0603": _CONTRACTS_DIR / "zacl0603.txt",
+    "xcash": _CONTRACTS_DIR / "xcash.txt",
 }
 
 
@@ -50,6 +51,21 @@ def position_to_segment(idx: SegmentIndex, t: float) -> int:
         if t < m.cumulative_start_s + m.est_dur_s:
             return m.seg_idx
     return len(idx.segments) - 1
+
+
+def dump_segments(idx: SegmentIndex, path: Path) -> Path:
+    """Write the raw segmentation result to disk for inspection/tuning.
+
+    Verbatim dump: exactly the segments split_contract produced (no
+    normalization, no cleanup), one per line with its index and estimated
+    timing, so segmentation tweaks can be reviewed against ground truth."""
+    with path.open("w", encoding="utf-8") as f:
+        f.write(f"# {idx.contract_id}: {len(idx.segments)} segments, "
+                f"total_est_s={idx.total_est_s}\n")
+        for m in idx.segments:
+            end = m.cumulative_start_s + m.est_dur_s
+            f.write(f"[{m.seg_idx:03d}] ({m.cumulative_start_s:7.1f}s ~ {end:7.1f}s) {m.text}\n")
+    return path
 
 
 def load_contract_text(contract_id: str) -> str:
