@@ -1,22 +1,21 @@
 # 启动与参数说明
 
-> 面向运维/新接手同事:怎么把系统跑起来、每个参数是什么意思、出问题看哪里。
-> 架构与数据流细节见 `architecture.md`;引擎安装见 `engine-setup.md`。
+> 面向运维/新接手同事:怎么把对外服务跑起来、每个参数什么意思、出问题看哪里。
+> 架构与数据流见 `architecture.md`;引擎安装见 `engine-setup.md`。设计决策见 `docs/adr/`(ADR-0001..0006)。
 
 ## 1. 系统组成
-
-三个活动部件 + 一个磁盘缓存:
 
 | 部件 | 进程 | 端口 | 必需性 |
 |---|---|---|---|
 | TTS 引擎 | 本地 GPT-SoVITS (`api_v2.py`) 或云端 Bailian CosyVoice(无本地进程) | 9880(本地) | 二选一 |
 | 后端 | `uvicorn seek_probe.backend.app:app` | 8000 | 必需 |
-| 浏览器 | 前端静态页由后端挂载提供 | 8000 | 必需 |
-| 缓存 | `seek_probe/cache/*.wav`(内容寻址,gitignored) | — | 自动 |
+| 上传 demo | 静态页(后端挂载) | 8000 | 可选(调用方可自带前端) |
+| 原文存储 | `seek_probe/uploaded/<contract_id>.txt`(内容寻址,gitignored) | — | 自动 |
+| 音频缓存 | `seek_probe/cache/<sha256>.wav`(内容寻址,gitignored) | — | 自动 |
 
 ## 2. 启动
 
-### A. 本地 GPT-SoVITS 引擎(默认)
+### A. 本地 GPT-SoVITS(默认)
 
 ```bash
 # 终端 1:引擎(安装见 engine-setup.md)
@@ -26,75 +25,69 @@ cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
 uv run uvicorn seek_probe.backend.app:app --port 8000
 ```
 
-需要参考音频 `seek_probe/refs/cantonese_ref_trim.wav` + 同名转写 txt(7 秒,gitignored)。
+需要参考音 `seek_probe/refs/cantonese_ref_trim.wav` + 同名转写 txt(7 秒,gitignored)。
 
-### B. 云端 Bailian CosyVoice 引擎(无需本地引擎/参考音)
+### B. 云端 Bailian CosyVoice(无需本地引擎/参考音)
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
 SEEK_PROBE_ENGINE=bailian uv run uvicorn seek_probe.backend.app:app --port 8000
 ```
 
-### 打开浏览器
+### 打开 demo
 
-```
-http://127.0.0.1:8000/?contract=xcash
-```
+http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进度条 seek / 播放。
+(不再有 `?contract=` 选择器;合同改为上传进件。)
 
 ## 3. 参数一览
 
-### 环境变量(启动参数)
+### 环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SEEK_PROBE_ENGINE` | `gptsovits` | 引擎选择:`gptsovits`(本地)/ `bailian`(云端 CosyVoice) |
-| `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需,阿里云百炼 API Key |
-| `BAILIAN_VOICE` | `longjiaxin_v3` | 云端音色。`longjiaxin_v3` 粤语女 / `longjiayi_v3` / `longanyue_v3` 粤语男 |
-| `SEEK_PROBE_DUMP_SEGMENTS` | 关 | `=1` 时启动即把每个注册合同的**原始切片**写到 `contracts/<id>.segments.txt`(逐段原文+预估时长,调分段参数用;每次启动覆盖重写) |
+| `SEEK_PROBE_ENGINE` | `gptsovits` | 引擎:`gptsovits`(本地)/ `bailian`(云端)。**切换需重启服务** |
+| `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需 |
+| `BAILIAN_VOICE` | `longjiaxin_v3` | 云端音色(粤语女);换它会改缓存键 |
 
 ### 硬编码常量(`backend/app.py` 顶部,改需动代码)
 
 | 常量 | 值 | 说明 |
 |---|---|---|
 | `ENGINE_URL` | `http://127.0.0.1:9880` | 本地引擎地址 |
-| `REF_AUDIO` / `REF_PROMPT` | `refs/cantonese_ref_trim.{wav,txt}` | 本地引擎参考音,**必须 3–10 秒**(GPT-SoVITS 硬限制) |
-| `VOICE_REF_ID` | `cantonese_ref_v1` | 缓存键组成部分;换参考音必须改它,否则命中旧音色缓存 |
+| `REF_AUDIO` / `REF_PROMPT` | `refs/cantonese_ref_trim.{wav,txt}` | 本地引擎参考音(必须 3–10 秒) |
+| `VOICE_REF_ID` | `cantonese_ref_v1` | 缓存键组成(与 `ENGINE_NAME` 一起) |
+| `KNOWN_TEMPLATES` | `{"xcash"}` | 接受的 `template_id`;v1 仅 xcash(ADR-0005) |
 
-### URL 参数(浏览器侧)
-
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `?contract=` | `zacl0603` | 合同选择。已注册:`sample` / `zacl0603` / `xcash`。注册表在 `backend/app.py` 和 `backend/contract.py` 的 `_CONTRACT_FILES`(两处都要加) |
+> 合同由调用方 `POST /api/contracts {text, template_id}` 上传,**不再预注册、无 `?contract=`**。
 
 ## 4. 它是怎么工作的(30 秒版)
 
-合同以 **TXT** 交付(`contracts/<id>.txt`,原始文件,系统只读不写):
+调用方 POST 上传合同 TXT + `template_id`(v1 仅 `xcash`)→ 后端算 `contract_id = sha256(template_id | 原文)`、原文落 `uploaded/`、`split_contract` 确定性切片 → 回发段清单 + 预估时长(不回传段文本)。前端据此画可拖进度条;取某段音频时:
 
-1. **切片**:浏览器请求合同 → 后端 `split_contract` 把全文确定性切成 ~20-50 字的段,附带每段预估时长 → 前端据此画出可拖动进度条(音频未生成也能拖)。
-2. **定位**:拖动 → 前端按累积时长找到第 N 段 → 请求 `/api/segment/<contract>/<N>`。
-3. **归一化**:后端只对该段跑 `normalize_for_tts`(数字/金额/日期 → 粤语读法,英文地址保留,多音字/问题 token 修正)。**逐段按需**,不批量。
-4. **缓存**:`sha256(归一化文本 + VOICE_REF_ID)` 为键。命中 → 直接回发放置的 wav;未命中 → 调引擎合成 → 落缓存 → 回发。
-5. **预载**:播放某段时后台预热后 3 段,顺序播放基本无等待。
-
-显示给用户的永远是原始段文本;归一化只影响喂给引擎的文本。
+1. **定位**:拖动 → 前端按累积时长找第 N 段 → `GET /api/contracts/{id}/segments/{n}`。
+2. **归一化**:后端对该段跑 `normalize_for_tts`(数字/金额/日期 → 粤语;英文地址保留;多音字修正)。逐段按需。
+3. **缓存**:`sha256(归一化文本 + VOICE_REF_ID + ENGINE_NAME)` 为键。命中 → 回放 wav;未命中 → 合成 → 落缓存 → 回发。**键含引擎**(ADR-0006),换引擎不脏读。
+4. **预载**:播放某段时后台预热后 3 段;上传时预热 seg 0。
 
 ## 5. 常见运维操作
 
 | 要做什么 | 怎么做 |
 |---|---|
-| 接入新合同(TXT) | `cp` 到 `contracts/<id>.txt` → `app.py` + `contract.py` 的 `_CONTRACT_FILES` 各注册一行 → `?contract=<id>` 打开 |
-| 切换引擎/音色 | 先 `rm -f seek_probe/cache/*.wav`(**缓存键不含引擎/音色**,不清会串音)再换参数重启 |
-| 观察/调整切片 | 带 `SEEK_PROBE_DUMP_SEGMENTS=1` 启动,对比 `contracts/<id>.segments.txt`;参数在 `segmenter.py` 的 `TARGET/SOFT_MAX/HARD_MAX` |
-| 看某段实际喂给引擎的文本 | `python -c "from seek_probe.backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
+| 换引擎 | 改 `SEEK_PROBE_ENGINE` **重启服务**(无需手动清缓存;键含引擎,旧引擎缓存自动失效、由 30 天滑动窗口清理——ADR-0006) |
+| 换本地参考音 | 改 `app.py` 的 `VOICE_REF_ID` + 替换 `refs/cantonese_ref_trim.*` 后重启 |
+| 看某段实际喂引擎的文本 | `python -c "from seek_probe.backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
+| 看切片结果 | 对上传后的 contract_id 调 `contract.dump_segments(build_index(cid, text), path)` |
 | 跑测试 | `uv run pytest -q` |
 
 ## 6. 排障
 
 | 症状 | 原因与处理 |
 |---|---|
-| `/api/segment` 502 | 本地引擎没起,或代理劫走了 127.0.0.1(代码已 `trust_env=False`,若改了 httpx 调用注意保留) |
-| 云端合成偶发 429 | cosyvoice-v3-flash 限流 3 QPM,预载并发会排队,稍等自动重试/重播即可 |
-| 浏览器音频时长显示巨大 | cosyvoice 的 wav 头时长字段是占位值,浏览器按 EOF 播放,不影响功能 |
-| 音色前后不一致 | 换过引擎/音色但没清缓存 → `rm -f seek_probe/cache/*.wav` |
-| `uv run pytest` 报 `No module named 'cn2an'` | `.venv` 是从别的项目拷来的,脚本 shebang 陈旧 → `uv sync --reinstall` |
-| 某字读错(如多音字) | 引擎前端缺陷,在 `normalizer.py` 加同音字/替换规则(现有 `還→環`、`注：→注，` 两个先例),勿改合同原文 |
+| 取段音频 **500** | 本地引擎没起(:9880 连接失败);或代理劫持(代码已 `trust_env=False`,改 httpx 时保留) |
+| 取段音频 **502** | 引擎在但回错状态(看响应 detail) |
+| `POST /api/contracts` **400** | `template_id` 非 `xcash`,或 text 为空 |
+| `GET /api/contracts/{id}` **404** | contract_id 未知,或原文已被 90 天 TTL 清理 → 重新上传 |
+| 云端合成偶发 429 | cosyvoice-v3-flash 限流 3 QPM,预载并发排队,稍等重试 |
+| 浏览器音频时长显示巨大 | cosyvoice wav 头时长字段占位,按 EOF 播放,不影响功能 |
+| `uv run pytest` 报 `No module named 'cn2an'` | `.venv` 陈旧 → `uv sync --reinstall` |
+| 某字读错(多音字) | 在 `normalizer.py` 加同音字/替换(先例 `還→環`、`注：→注，`),勿改合同原文 |
