@@ -70,4 +70,4 @@ uv run python -c "from seek_probe.backend.normalizer import normalize_for_tts; p
 
 - 测试对 `app.py` 用 FastAPI `TestClient`（通过 `app.make_engine` / `_resolve_contract` 注入依赖），HTTP client 已 mock —— 不需要真引擎。
 - 当引擎读错某个字（多音字、问题 token）时，**在 `normalizer.py` 里修**（同音字替换 / token 改写 —— 已有 `還→環`、`注：→注，` 先例），**绝不改合同原文**。
-- 深层设计上下文在 `docs/superpowers/`（`specs/` 设计 spec、`plans/` 实施计划）。`seek_probe/docs/architecture.md` §10 记录了代码有意偏离 spec 的地方。
+- 深层设计上下文在 `docs/adr/`（ADR-0001..0006）与 `CONTEXT.md`（领域语言）；`seek_probe/docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。
