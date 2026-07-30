@@ -8,10 +8,10 @@
 | 部件 | 进程 | 端口 | 必需性 |
 |---|---|---|---|
 | TTS 引擎 | 本地 GPT-SoVITS (`api_v2.py`) 或云端 Bailian CosyVoice(无本地进程) | 9880(本地) | 二选一 |
-| 后端 | `uvicorn seek_probe.backend.app:app` | 8000 | 必需 |
+| 后端 | `uvicorn backend.app:app` | 8000 | 必需 |
 | 上传 demo | 静态页(后端挂载) | 8000 | 可选(调用方可自带前端) |
-| 原文存储 | `seek_probe/uploaded/<contract_id>.txt`(内容寻址,gitignored) | — | 自动 |
-| 音频缓存 | `seek_probe/cache/<sha256>.wav`(内容寻址,gitignored) | — | 自动 |
+| 原文存储 | `uploaded/<contract_id>.txt`(内容寻址,gitignored) | — | 自动 |
+| 音频缓存 | `cache/<sha256>.wav`(内容寻址,gitignored) | — | 自动 |
 
 ## 2. 启动
 
@@ -22,16 +22,16 @@
 cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
 
 # 终端 2:后端 + 前端
-uv run uvicorn seek_probe.backend.app:app --port 8000
+uv run uvicorn backend.app:app --port 8000
 ```
 
-需要参考音 `seek_probe/refs/cantonese_ref_trim.wav` + 同名转写 txt(7 秒,gitignored)。
+需要参考音 `refs/cantonese_ref_trim.wav` + 同名转写 txt(7 秒,gitignored)。
 
 ### B. 云端 Bailian CosyVoice(无需本地引擎/参考音)
 
 ```bash
 export DASHSCOPE_API_KEY=sk-...
-SEEK_PROBE_ENGINE=bailian uv run uvicorn seek_probe.backend.app:app --port 8000
+SEEK_PROBE_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
 ```
 
 ### 打开 demo
@@ -70,7 +70,7 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 |---|---|
 | 换引擎 | 改 `SEEK_PROBE_ENGINE` **重启服务**(无需手动清缓存;键含引擎,旧引擎缓存自动失效、由 30 天滑动窗口清理——ADR-0006) |
 | 换本地参考音 | 改 `app.py` 的 `VOICE_REF_ID` + 替换 `refs/cantonese_ref_trim.*` 后重启 |
-| 看某段实际喂引擎的文本 | `python -c "from seek_probe.backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
+| 看某段实际喂引擎的文本 | `python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
 | 看切片结果 | 对上传后的 contract_id 调 `contract.dump_segments(build_index(cid, text), path)` |
 | 跑测试 | `uv run pytest -q` |
 

@@ -28,8 +28,8 @@ uv pip install -p .venv -r requirements.txt
 
 ## 4. 粤语参考音频(voice-clone 锚)
 
-- 放约 5s 干净粤语人声到:`seek_probe/refs/cantonese_ref.wav`(mono,16k/24k/48k)。
-- 把该音频的**粤语转写**写到:`seek_probe/refs/cantonese_ref.txt`(整段文本,作 `prompt_text`)。
+- 放约 5s 干净粤语人声到:`refs/cantonese_ref.wav`(mono,16k/24k/48k)。
+- 把该音频的**粤语转写**写到:`refs/cantonese_ref.txt`(整段文本,作 `prompt_text`)。
 - 没有的话:自己录 ~5 秒,或用公开粤语短音频;穿刺只需一个固定粤语参考。
 
 ## 5. 启动 API(独立终端,常驻)
@@ -42,8 +42,8 @@ uv run python api_v2.py      # 默认 127.0.0.1:9880
 ## 6. 验证粤语(冒烟)
 
 ```bash
-REF=/Users/roy/codes/audio-with-qwen3-tts/seek_probe/refs/cantonese_ref.wav
-PROMPT=$(cat /Users/roy/codes/audio-with-qwen3-tts/seek_probe/refs/cantonese_ref.txt)
+REF=/Users/roy/codes/audio-with-qwen3-tts/refs/cantonese_ref.wav
+PROMPT=$(cat /Users/roy/codes/audio-with-qwen3-tts/refs/cantonese_ref.txt)
 curl -s -X POST http://127.0.0.1:9880/tts \
   -H 'Content-Type: application/json' \
   -d "{\"text\":\"甲方應於三日內支付訂金。\",\"text_lang\":\"yue\",\"ref_audio_path\":\"$REF\",\"prompt_text\":\"$PROMPT\",\"prompt_lang\":\"yue\",\"media_type\":\"wav\",\"streaming_mode\":false}" \
@@ -62,7 +62,7 @@ ls -la /tmp/yue_smoke.wav   # KB+ = 拿到音频
 1. **`hf download lj1995/GPT-SoVITS <folder>` 会 404** —— 该 CLI 把 folder 当单文件 resolve。改用 **ModelScope 镜像 `XXXXRT/GPT-SoVITS-Pretrained`**(国内快很多),按 `pretrained_models/<subfolder>/<file>` 的 resolve URL 逐文件拉。需要的子目录:`gsv-v2final-pretrained/`、`chinese-hubert-base/`、`chinese-roberta-wwm-ext-large/`、`fast_langdetect/`。
 2. **缺 `pretrained_models/fast_langdetect`** → 报 `Cache directory not found: .../fast_langdetect`。补 `lid.176.bin` + `lid.176.ftz`(ModelScope 有)。
 3. **`TorchCodec is required for load_with_torchcodec`** —— 根因是 **torchaudio 2.11 / torch 2.13 过新**(requirements 未 pin 上限,uv 装了最新)。修法:`uv pip install -p .venv torchcodec`(实测有效;降 transformers 到 4.46.3 无用,因为是 torchaudio 触发)。
-4. **参考音频必须 3–10 秒** —— 否则 `参考音频在3~10秒范围外`。用 `seek_probe/refs/cantonese_ref_trim.wav`(7s)+ 对应转写 `cantonese_ref_trim.txt`。app.py 已指向 trim 版。
+4. **参考音频必须 3–10 秒** —— 否则 `参考音频在3~10秒范围外`。用 `refs/cantonese_ref_trim.wav`(7s)+ 对应转写 `cantonese_ref_trim.txt`。app.py 已指向 trim 版。
 5. **本机 `http_proxy=localhost:7897`(clash)** —— curl 测试加 `--noproxy '*'`;后端 httpx 客户端必须 `trust_env=False`(已在 `gptsovits_client.py` 处理),否则 127.0.0.1 走代理 → 502。浏览器访问 localhost 通常自动 bypass。
 6. **M0 结果**:书面中文 `甲方應於三日內支付訂金。` + `text_lang=yue` → 3.9s 粤语音频,生成耗时 1.57s,**RTF≈0.4**(M3 Max CPU,快于实时)。样本见 `samples/gptsovits_yue_m0.wav`。
 7. **含拉丁字母的文本(如型号 `XR-7200`)→ 引擎 400 `Resource 'averaged_perceptron_tagger_eng' not found`**。GPT-SoVITS 英文前端需要 NLTK 数据。下载 ModelScope 的 `nltk_data.zip`,解压到 `~/nltk_data/`,**注意 zip 内有嵌套的 `nltk_data/` 目录,要把里面那层的内容拍平到 `~/nltk_data/`**(否则 NLTK 找不到 `taggers/averaged_perceptron_tagger_eng`)。

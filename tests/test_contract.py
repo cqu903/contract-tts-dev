@@ -1,5 +1,5 @@
 import pytest
-from seek_probe.backend.contract import build_index, dump_segments, position_to_segment, ContractStore
+from backend.contract import build_index, dump_segments, position_to_segment, ContractStore
 
 
 def test_index_cumulative_starts_monotonic_and_total_matches():

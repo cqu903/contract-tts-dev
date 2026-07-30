@@ -8,35 +8,35 @@
 
 ## 这是什么
 
-一个**对外粤语合同 TTS 服务**（由可行性探针演进而来）：调用方上传香港贷款 / 金融合同 TXT，服务用**粤语**朗读，带可拖动进度条与按段 seek。基于 **GPT-SoVITS**（本地）或 **百炼 CosyVoice**（云端）。核心思路：把全文确定性切片、把 seek 位置映射到第 N 段、内容寻址音频让静态样板只生成一次处处复用、并在合成前一刻对每段做归一化（数字 / 日期 / 金额 → 粤语读法）。代码在 `seek_probe/` 下；设计决策见 `docs/adr/`(ADR-0001..0006) + `CONTEXT.md`。
+一个**对外粤语合同 TTS 服务**（由可行性探针演进而来）：调用方上传香港贷款 / 金融合同 TXT，服务用**粤语**朗读，带可拖动进度条与按段 seek。基于 **GPT-SoVITS**（本地）或 **百炼 CosyVoice**（云端）。核心思路：把全文确定性切片、把 seek 位置映射到第 N 段、内容寻址音频让静态样板只生成一次处处复用、并在合成前一刻对每段做归一化（数字 / 日期 / 金额 → 粤语读法）。代码在 `` 下；设计决策见 `docs/adr/`(ADR-0001..0006) + `CONTEXT.md`。
 
 > 起源于 spike，v1 仍带探针气质：决策以"证明可行"优先于健壮性；引擎被刻意解耦，以便把音色质量风险单独隔离。
 
 ## 命令
 
-全部在仓库根目录用 **`uv`** 运行（Python 3.12，`tool.uv.package = false` —— 不可安装包，直接跑源码）。完整参数 / 排障见 `seek_probe/docs/running.md`。
+全部在仓库根目录用 **`uv`** 运行（Python 3.12，`tool.uv.package = false` —— 不可安装包，直接跑源码）。完整参数 / 排障见 `docs/running.md`。
 
 ```bash
 uv run pytest -q                                       # 测试（不依赖引擎，已 mock）
-uv run uvicorn seek_probe.backend.app:app --port 8000  # 起服务，开 http://127.0.0.1:8000
-# 云端引擎：DASHSCOPE_API_KEY=sk-... SEEK_PROBE_ENGINE=bailian uv run uvicorn seek_probe.backend.app:app --port 8000
+uv run uvicorn backend.app:app --port 8000  # 起服务，开 http://127.0.0.1:8000
+# 云端引擎：DASHSCOPE_API_KEY=sk-... SEEK_PROBE_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
 # 看某段归一化后实际喂引擎的文本：
-uv run python -c "from seek_probe.backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"
+uv run python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"
 ```
 
-**本地 TTS 引擎**是独立仓库 `/Users/roy/codes/GPT-SoVITS`（Python 3.10 venv）：`cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py`（监听 `:9880`）。安装步骤与踩坑见 `seek_probe/docs/engine-setup.md`。**测试不依赖引擎**（客户端已 mock）。
+**本地 TTS 引擎**是独立仓库 `/Users/roy/codes/GPT-SoVITS`（Python 3.10 venv）：`cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py`（监听 `:9880`）。安装步骤与踩坑见 `docs/engine-setup.md`。**测试不依赖引擎**（客户端已 mock）。
 
 ## 架构（全局视角）
 
-浏览器 ↔ FastAPI 后端（`seek_probe/backend/app.py`）↔ 外部 TTS 引擎，中间夹一层内容寻址磁盘缓存。**权威 as-built 见 `seek_probe/docs/architecture.md`**（数据流主线、seek 逻辑、缓存、归一化表、文件地图、约束）；运维 / 参数见 `seek_probe/docs/running.md`。本节只给指针与最关键的形状。
+浏览器 ↔ FastAPI 后端（`backend/app.py`）↔ 外部 TTS 引擎，中间夹一层内容寻址磁盘缓存。**权威 as-built 见 `docs/architecture.md`**（数据流主线、seek 逻辑、缓存、归一化表、文件地图、约束）；运维 / 参数见 `docs/running.md`。本节只给指针与最关键的形状。
 
-主干（`seek_probe/backend/`）：上传合同 TXT → 确定性切片（`segmenter.split_contract`）→ 逐段按需归一化（`normalizer.normalize_for_tts`）→ `engine.synth` → 内容寻址缓存（`cache.SegmentCache`）→ `audio/wav`。
+主干（`backend/`）：上传合同 TXT → 确定性切片（`segmenter.split_contract`）→ 逐段按需归一化（`normalizer.normalize_for_tts`）→ `engine.synth` → 内容寻址缓存（`cache.SegmentCache`）→ `audio/wav`。
 
 **换引擎代价很小（设计如此）：** 两个 client 都实现 `synth(text) -> AsyncIterator[bytes]`；`app.make_engine(SEEK_PROBE_ENGINE)` 选其一。归一化、seek、缓存全部共用。
 
 ## 关键陷阱（不直观，会踩）
 
-- **合同改外部上传，不再预注册。** 对外入口 `POST /api/contracts`（JSON `{text, template_id}`）→ `contract_id = sha256(template_id | 原文)`，原文落盘 `seek_probe/uploaded/<cid>.txt`（内容寻址、90 天 creation TTL，见 ADR-0001/0004）。`app.py` / `contract.py` 的 `_CONTRACT_FILES` 与 `load_contract_text` 已删；`template_id` 必传、v1 仅接受 `xcash`（未知 → 400，见 ADR-0005）。真实合同含 PII：`contracts/*` 与 `uploaded/` 均 gitignore（仅 `sample_contract.txt` 被跟踪）。
+- **合同改外部上传，不再预注册。** 对外入口 `POST /api/contracts`（JSON `{text, template_id}`）→ `contract_id = sha256(template_id | 原文)`，原文落盘 `uploaded/<cid>.txt`（内容寻址、90 天 creation TTL，见 ADR-0001/0004）。`app.py` / `contract.py` 的 `_CONTRACT_FILES` 与 `load_contract_text` 已删；`template_id` 必传、v1 仅接受 `xcash`（未知 → 400，见 ADR-0005）。真实合同含 PII：`contracts/*` 与 `uploaded/` 均 gitignore（仅 `sample_contract.txt` 被跟踪）。
 - **缓存键含引擎（ADR-0006）。** `cache_key = sha256(归一化文本 + VOICE_REF_ID + ENGINE_NAME)` —— 切换引擎（`SEEK_PROBE_ENGINE`）**不会**脏读：旧引擎缓存自动失效、由 30 天滑动窗口清理，无需手动 `rm`。但 `VOICE_REF_ID` 仍在键里，换本地参考音（须改 `app.py` 的 `VOICE_REF_ID`）或云端换音色（`BAILIAN_VOICE`）仍会改键、旧缓存首次重合成。
 - **`httpx(trust_env=False)` 是承重墙**，两个引擎 client 都靠它。开发机开着 clash 代理（`:7897`）；不 `trust_env=False`，`127.0.0.1` / dashscope 请求会走代理 → 502。改 httpx 调用时务必保留。
 - **云端路径不能省归一化。** CosyVoice 自带 TN 只覆盖日期和基础金额；逐位读法（电话 / 身份证 / 型号）、`HK$→港幣`、罗马序号仍要靠 `normalizer.py`。本地与云端路径结构完全一致（归一化 → 引擎）。
@@ -45,6 +45,6 @@ uv run python -c "from seek_probe.backend.normalizer import normalize_for_tts; p
 
 ## 约定
 
-- 测试对 `app.py` 用 FastAPI `TestClient`，靠 `monkeypatch.setattr(appmod, "engine" / "cache" / "CONTRACT_STORE")` 注入依赖（见 `seek_probe/tests/test_app.py`），HTTP client 已 mock —— 不需要真引擎。
+- 测试对 `app.py` 用 FastAPI `TestClient`，靠 `monkeypatch.setattr(appmod, "engine" / "cache" / "CONTRACT_STORE")` 注入依赖（见 `tests/test_app.py`），HTTP client 已 mock —— 不需要真引擎。
 - 当引擎读错某个字（多音字、问题 token）时，**在 `normalizer.py` 里修**（同音字替换 / token 改写 —— 已有 `還→環`、`注：→注，` 先例），**绝不改合同原文**。
-- 深层设计上下文在 `docs/adr/`（ADR-0001..0006）与 `CONTEXT.md`（领域语言）；`seek_probe/docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。
+- 深层设计上下文在 `docs/adr/`（ADR-0001..0006）与 `CONTEXT.md`（领域语言）；`docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。

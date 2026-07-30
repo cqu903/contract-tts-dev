@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
-import seek_probe.backend.app as appmod
-from seek_probe.backend.cache import SegmentCache
-from seek_probe.backend.contract import ContractStore
-from seek_probe.backend.gptsovits_client import GPTSoVITSClient
-from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
+import backend.app as appmod
+from backend.cache import SegmentCache
+from backend.contract import ContractStore
+from backend.gptsovits_client import GPTSoVITSClient
+from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 
 
 class FakeEngine:

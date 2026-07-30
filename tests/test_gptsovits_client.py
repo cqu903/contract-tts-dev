@@ -1,7 +1,7 @@
 import asyncio
 import json
 import httpx
-from seek_probe.backend.gptsovits_client import GPTSoVITSClient
+from backend.gptsovits_client import GPTSoVITSClient
 
 
 def test_synth_streams_engine_bytes_and_sends_yue_payload():

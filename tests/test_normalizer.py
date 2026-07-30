@@ -1,4 +1,4 @@
-from seek_probe.backend.normalizer import normalize_for_tts
+from backend.normalizer import normalize_for_tts
 
 
 def test_amount_with_commas():

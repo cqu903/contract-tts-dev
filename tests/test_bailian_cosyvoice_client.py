@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
+from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 
 OSS_URL = "https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/x.wav"
 

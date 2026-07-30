@@ -1,5 +1,5 @@
 """Measure cold-seek first-byte latency, cache-hit, and per-segment RTF.
-Run with engine + backend up: uv run python seek_probe/scripts/measure.py"""
+Run with engine + backend up: uv run python scripts/measure.py"""
 from __future__ import annotations
 import time
 import httpx

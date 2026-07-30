@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from seek_probe.backend.segmenter import split_contract, estimate_duration
+from backend.segmenter import split_contract, estimate_duration
 
 _DAY = 86400.0
 

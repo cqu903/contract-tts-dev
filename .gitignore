@@ -17,19 +17,19 @@ raw_dumps/
 # SDD workspace (git-ignored scratch)
 .superpowers/
 
-# seek_probe spike
-seek_probe/cache/
+# data dirs (gitignored)
+cache/
 # uploaded contract originals (external uploads) — PII, never tracked
-seek_probe/uploaded/
-seek_probe/refs/*.wav
-seek_probe/refs/*.mp3
+uploaded/
+refs/*.wav
+refs/*.mp3
 # generated A/B verification audio clips
-seek_probe/verify/
+verify/
 
 # Real contract texts may contain PII (names, ID numbers, addresses);
 # only the synthetic sample is tracked.
-seek_probe/contracts/*
-!seek_probe/contracts/sample_contract.txt
+contracts/*
+!contracts/sample_contract.txt
 
 # OS / logs
 .DS_Store

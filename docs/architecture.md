@@ -1,4 +1,4 @@
-# seek_probe 架构说明(as-built,对外服务)
+# 架构说明(as-built,对外服务)
 
 > 本文描述**当前真实实现**(代码为准)。设计决策见 `docs/adr/`(ADR-0001..0006)+ `CONTEXT.md`(领域语言)。
 
@@ -40,8 +40,8 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 ```
 
 - **引擎进程**:`/Users/roy/codes/GPT-SoVITS` 独立 py3.10 venv,常驻 `api_v2.py`,暴露 `POST /tts`。
-- **后端进程**:本项目 py3.12 venv,`uvicorn seek_probe.backend.app:app --port 8000`。
-- **存储**:`seek_probe/uploaded/`(原文,gitignored)、`seek_probe/cache/`(音频,gitignored)。
+- **后端进程**:本项目 py3.12 venv,`uvicorn backend.app:app --port 8000`。
+- **存储**:`uploaded/`(原文,gitignored)、`cache/`(音频,gitignored)。
 - 浏览器与后端走 `:8000`;后端调引擎走 `:9880`(`httpx trust_env=False`,绕过本机 clash 代理)。
 
 ## 2. 一次 seek 的完整时序
@@ -133,16 +133,16 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 
 | 文件 | 职责 |
 |---|---|
-| `seek_probe/backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
-| `seek_probe/backend/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
-| `seek_probe/backend/cache.py` | `cache_key(text, voice_ref_id, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
-| `seek_probe/backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
-| `seek_probe/backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
-| `seek_probe/backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`SEEK_PROBE_ENGINE=bailian` 启用 |
-| `seek_probe/backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;启动 lifespan 淘汰 |
-| `seek_probe/frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
-| `seek_probe/contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |
-| `seek_probe/refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、wav gitignored) |
+| `backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
+| `backend/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
+| `backend/cache.py` | `cache_key(text, voice_ref_id, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
+| `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
+| `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
+| `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`SEEK_PROBE_ENGINE=bailian` 启用 |
+| `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;启动 lifespan 淘汰 |
+| `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
+| `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |
+| `refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、wav gitignored) |
 
 ## 8. 上传合同 / 工具速查
 

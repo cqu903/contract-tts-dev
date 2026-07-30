@@ -1,4 +1,4 @@
-from seek_probe.backend.cache import cache_key, SegmentCache
+from backend.cache import cache_key, SegmentCache
 
 
 def test_key_stable_for_same_text_voice_engine_distinct_otherwise():

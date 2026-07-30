@@ -20,11 +20,11 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from seek_probe.backend.contract import build_index, compute_contract_id, ContractStore, SegmentIndex
-from seek_probe.backend.cache import cache_key, SegmentCache
-from seek_probe.backend.gptsovits_client import GPTSoVITSClient
-from seek_probe.backend.bailian_cosyvoice_client import BailianCosyVoiceClient
-from seek_probe.backend.normalizer import normalize_for_tts
+from backend.contract import build_index, compute_contract_id, ContractStore, SegmentIndex
+from backend.cache import cache_key, SegmentCache
+from backend.gptsovits_client import GPTSoVITSClient
+from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
+from backend.normalizer import normalize_for_tts
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT / "frontend"

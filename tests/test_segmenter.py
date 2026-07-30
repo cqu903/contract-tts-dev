@@ -1,4 +1,4 @@
-from seek_probe.backend.segmenter import split_contract, estimate_duration
+from backend.segmenter import split_contract, estimate_duration
 
 
 def test_same_text_yields_identical_segments():
