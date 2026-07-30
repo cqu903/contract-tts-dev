@@ -29,8 +29,8 @@ DASHSCOPE_API_KEY=sk-... SEEK_PROBE_ENGINE=bailian uv run uvicorn seek_probe.bac
 # 不起服务，看某段经过归一化后实际喂给引擎的文本：
 uv run python -c "from seek_probe.backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"
 
-# 把每个注册合同的原始切片结果落到 contracts/<id>.segments.txt，便于调参：
-SEEK_PROBE_DUMP_SEGMENTS=1 uv run uvicorn seek_probe.backend.app:app --port 8000
+# （已移除）合同改外部上传后不再有「预注册合同」可 dump；如需看切片结果，
+# 对上传后的 contract_id 调 seek_probe.backend.contract.dump_segments。
 ```
 
 **本地 TTS 引擎是另一个独立仓库**，位于 `/Users/roy/codes/GPT-SoVITS`，跑在它自己的 **Python 3.10** venv 里：`cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py`（监听 `:9880`）。安装步骤与众多 M0 踩坑见 `seek_probe/docs/engine-setup.md`。**测试不依赖引擎**（客户端已 mock）。
@@ -52,15 +52,15 @@ SEEK_PROBE_DUMP_SEGMENTS=1 uv run uvicorn seek_probe.backend.app:app --port 8000
 - **`contract.py`** —— `build_index`（段 + 累积时间 + `total_est_s`）、`position_to_segment`（seek → 吸附段边界）。也持有一份 `_CONTRACT_FILES`（见陷阱）。
 - **`normalizer.py`** —— `normalize_for_tts`。按语言分流：英文片段（地址 / 公司名）做 L2 清洗（全大写 → 首字母大写、展开 `FLT→Flat`/`BLK→Block`/`39/F→39th Floor`、数字保留）并保持英文，由 `yue` 前端读成词；中文语境的数字 / 金额 / 日期 / 身份证 / 罗马序号 → 粤语中文（`cn2an`）。依赖 `cn2an`。
 - **`cache.py`** —— `cache_key(text, voice_ref_id)` + `SegmentCache`。内容寻址：相同文本在所有合同里复用同一个文件。
-- **`app.py`** —— FastAPI。端点：`GET /api/contract/{id}`（段 + 文本 + 时间）、`GET /api/segment/{id}/{n}`（音频，per-key `asyncio.Lock` 二次查缓存做并发去重）、`POST /api/preload/{id}/{n}`（后台预热后 K=3 段）。静态前端挂在 `/`。
+- **`app.py`** —— FastAPI。对外端点：`POST /api/contracts`（上传 `{text, template_id}` → 内容寻址 `contract_id`，后台预热 seg 0）、`GET /api/contracts/{id}`（段 + 时间，**不回传文本**）、`GET /api/contracts/{id}/segments/{n}`（音频，per-key `asyncio.Lock` 二次查缓存做并发去重）、`POST /api/contracts/{id}/segments/{n}/preload`（后台预热）。静态前端（上传 demo）挂在 `/`；启动 lifespan 清过期项（音频 30d 滑动窗口 / 原文 90d）。
 - **`frontend/app.js`** —— 把 `range(0..1000)` 进度条映射到 `[0, total_est_s]`（音频没生成也能拖）、定位到所属段、播完 `ended` 自动续、同时触发预载。
 
 **换引擎代价很小（设计如此）：** 两个 client 都实现 `synth(text) -> AsyncIterator[bytes]`；`app.make_engine(SEEK_PROBE_ENGINE)` 选其一。归一化、seek、缓存全部共用。
 
 ## 关键陷阱（不直观，会踩）
 
-- **合同要注册两次。** 新增合同必须同时改 `app.py` 和 `contract.py` 两处的 `_CONTRACT_FILES`。漏一处，该合同会静默无法解析（404）。合同**只接受 TXT、只读**（系统永不回写）；真实合同含 PII 已 gitignore（仅 `sample_contract.txt` 被跟踪）。
-- **缓存键不含引擎 / 音色** —— 只有 `sha256(归一化文本 + VOICE_REF_ID)`。切换引擎 / 音色（`SEEK_PROBE_ENGINE` / `BAILIAN_VOICE`）或换参考音**而不清缓存，会返回错误 / 陈旧音频**。先 `rm -f seek_probe/cache/*.wav`。换本地参考音还必须改 `app.py` 里的 `VOICE_REF_ID`。
+- **合同改外部上传，不再预注册。** 对外入口 `POST /api/contracts`（JSON `{text, template_id}`）→ `contract_id = sha256(template_id | 原文)`，原文落盘 `seek_probe/uploaded/<cid>.txt`（内容寻址、90 天 creation TTL，见 ADR-0001/0004）。`app.py` / `contract.py` 的 `_CONTRACT_FILES` 与 `load_contract_text` 已删；`template_id` 必传、v1 仅接受 `xcash`（未知 → 400，见 ADR-0005）。真实合同含 PII：`contracts/*` 与 `uploaded/` 均 gitignore（仅 `sample_contract.txt` 被跟踪）。
+- **缓存键含引擎（ADR-0006）。** `cache_key = sha256(归一化文本 + VOICE_REF_ID + ENGINE_NAME)` —— 切换引擎（`SEEK_PROBE_ENGINE`）**不会**脏读：旧引擎缓存自动失效、由 30 天滑动窗口清理，无需手动 `rm`。但 `VOICE_REF_ID` 仍在键里，换本地参考音（须改 `app.py` 的 `VOICE_REF_ID`）或云端换音色（`BAILIAN_VOICE`）仍会改键、旧缓存首次重合成。
 - **`httpx(trust_env=False)` 是承重墙**，两个引擎 client 都靠它。开发机开着 clash 代理（`:7897`）；不 `trust_env=False`，`127.0.0.1` / dashscope 请求会走代理 → 502。改 httpx 调用时务必保留。
 - **云端路径不能省归一化。** CosyVoice 自带 TN 只覆盖日期和基础金额；逐位读法（电话 / 身份证 / 型号）、`HK$→港幣`、罗马序号仍要靠 `normalizer.py`。本地与云端路径结构完全一致（归一化 → 引擎）。
 - **生成后响应，不是边生成边 tee 流。** `get_segment` 先把整段字节收齐，*再*返回 `Response`。这是有意为之：引擎失败时能回明确的 `502`/`500`，而不是被浏览器吞成空的 `200`（表现为模糊的 "Load failed"）。`streaming_mode=true`（降冷 seek 延迟）是已记录的非目标 —— 其分块格式随版本变。
