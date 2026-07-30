@@ -60,14 +60,9 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 
 > 合同由调用方 `POST /api/contracts {text, template_id}` 上传,**不再预注册、无 `?contract=`**。
 
-## 4. 它是怎么工作的(30 秒版)
+## 4. 它是怎么工作的
 
-调用方 POST 上传合同 TXT + `template_id`(v1 仅 `xcash`)→ 后端算 `contract_id = sha256(template_id | 原文)`、原文落 `uploaded/`、`split_contract` 确定性切片 → 回发段清单 + 预估时长(不回传段文本)。前端据此画可拖进度条;取某段音频时:
-
-1. **定位**:拖动 → 前端按累积时长找第 N 段 → `GET /api/contracts/{id}/segments/{n}`。
-2. **归一化**:后端对该段跑 `normalize_for_tts`(数字/金额/日期 → 粤语;英文地址保留;多音字修正)。逐段按需。
-3. **缓存**:`sha256(归一化文本 + VOICE_REF_ID + ENGINE_NAME)` 为键。命中 → 回放 wav;未命中 → 合成 → 落缓存 → 回发。**键含引擎**(ADR-0006),换引擎不脏读。
-4. **预载**:播放某段时后台预热后 3 段;上传时预热 seg 0。
+上传 → 确定性切片 → 逐段按需归一化 → 内容寻址缓存 → 音频。数据流主线与各环节细节见 `architecture.md` §0.5 / §2(此处不重复)。
 
 ## 5. 常见运维操作
 
