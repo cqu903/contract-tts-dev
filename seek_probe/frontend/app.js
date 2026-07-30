@@ -1,15 +1,16 @@
-const CONTRACT_ID = new URLSearchParams(location.search).get("contract") || "zacl0603";
 const PRELOAD_AHEAD = 3;
 
 const bar = document.getElementById("bar");
 const statusEl = document.getElementById("status");
 const audio = document.getElementById("audio");
 const clauseEl = document.getElementById("clause");
+const textInput = document.getElementById("text");
+const uploadBtn = document.getElementById("upload");
 
+let contractId = null;
 let segs = [];        // [{seg_idx, est_dur_s, cumulative_start_s}]
 let totalEst = 0;
 let current = 0;
-let segTexts = [];
 
 function barToSeconds(v) {
   return (Number(v) / 1000) * totalEst;
@@ -25,7 +26,7 @@ function segmentAtSeconds(s) {
 }
 
 async function loadSegment(segIdx) {
-  const r = await fetch(`/api/segment/${CONTRACT_ID}/${segIdx}`);
+  const r = await fetch(`/api/contracts/${contractId}/segments/${segIdx}`);
   if (!r.ok) throw new Error(`segment ${segIdx} failed: ${r.status}`);
   return await r.blob();
 }
@@ -36,13 +37,13 @@ async function playFrom(segIdx) {
   try {
     const blob = await loadSegment(segIdx);
     audio.src = URL.createObjectURL(blob);
-    clauseEl.textContent = segTexts[segIdx] || "";
+    clauseEl.textContent = `第 ${segIdx + 1}/${segs.length} 段`;
     bar.value = secondsToBar(segs[segIdx].cumulative_start_s);
     await audio.play();
     statusEl.textContent = `播放 第 ${segIdx + 1}/${segs.length} 段`;
     for (let k = 1; k <= PRELOAD_AHEAD; k++) {
       const n = segIdx + k;
-      if (n < segs.length) fetch(`/api/preload/${CONTRACT_ID}/${n}`, { method: "POST" });
+      if (n < segs.length) fetch(`/api/contracts/${contractId}/segments/${n}/preload`, { method: "POST" });
     }
   } catch (e) {
     statusEl.textContent = "錯誤:" + e.message;
@@ -59,24 +60,36 @@ bar.addEventListener("change", () => {
   playFrom(seg);
 });
 
-(async function init() {
-  const r = await fetch(`/api/contract/${CONTRACT_ID}`);
-  const data = await r.json();
-  segs = data.segments;
-  totalEst = data.total_est_s;
-  segTexts = data.texts;
-  bar.disabled = false;
-  statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預載第 1 段中…`;
-  // 預載第 1 段並設為 audio.src,這樣首次按「播放」就能直接出聲。
-  // 否則原生播放鍵因 audio.src 為空而無反應,須先拖動進度條才會 playFrom。
-  current = 0;
+uploadBtn.addEventListener("click", async () => {
+  const text = textInput.value.trim();
+  if (!text) { statusEl.textContent = "請貼上合同文字"; return; }
+  uploadBtn.disabled = true;
+  statusEl.textContent = "上傳切片中…";
   try {
-    const blob = await loadSegment(0);
-    audio.src = URL.createObjectURL(blob);
-    clauseEl.textContent = segTexts[0] || "";
-    bar.value = 0;
-    statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預估 ${totalEst.toFixed(0)}s(已預載第 1 段,按播放即可)`;
+    const r = await fetch("/api/contracts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, template_id: "xcash" }),
+    });
+    if (!r.ok) throw new Error(`upload failed: ${r.status}`);
+    const data = await r.json();
+    contractId = data.contract_id;
+    segs = data.segments;
+    totalEst = data.total_est_s;
+    bar.disabled = false;
+    current = 0;
+    // preload seg 0 (also server-warmed) so the native play button works immediately
+    try {
+      const blob = await loadSegment(0);
+      audio.src = URL.createObjectURL(blob);
+      clauseEl.textContent = `第 1/${segs.length} 段`;
+      bar.value = 0;
+      statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預估 ${totalEst.toFixed(0)}s(已預載第 1 段,按播放即可)`;
+    } catch (e) {
+      statusEl.textContent = `就緒 · 預載第 1 段失敗:${e.message}(可拖動進度條開始)`;
+    }
   } catch (e) {
-    statusEl.textContent = `就緒 · 預載第 1 段失敗:${e.message}(可拖動進度條開始)`;
+    statusEl.textContent = "上傳失敗:" + e.message;
+    uploadBtn.disabled = false;
   }
-})();
+});

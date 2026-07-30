@@ -1,5 +1,5 @@
 import pytest
-from seek_probe.backend.contract import build_index, dump_segments, position_to_segment
+from seek_probe.backend.contract import build_index, dump_segments, position_to_segment, ContractStore
 
 
 def test_index_cumulative_starts_monotonic_and_total_matches():
@@ -29,3 +29,15 @@ def test_dump_segments_verbatim(tmp_path):
     assert lines[0].startswith("# c: 2 segments")
     # every segment text appears verbatim, one per line, in order
     assert [line.split(") ", 1)[1] for line in lines[1:]] == [m.text for m in idx.segments]
+
+
+def test_contract_store_evict_removes_old_originals(tmp_path):
+    store = ContractStore(tmp_path / "uploaded")
+    store.put("old", "原文甲", now=0.0)
+    store.put("new", "原文乙", now=100 * 86400)   # day 100
+    # evict at day 100, text_ttl_days=90 → cutoff = day 10：
+    # old（创建于 day 0）已过期淘汰；new（创建于 day 100）保留
+    removed = store.evict_expired(100 * 86400, text_ttl_days=90)
+    assert removed == 1
+    assert store.get("old") is None
+    assert store.get("new") == "原文乙"

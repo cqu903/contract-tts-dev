@@ -19,6 +19,8 @@ raw_dumps/
 
 # seek_probe spike
 seek_probe/cache/
+# uploaded contract originals (external uploads) — PII, never tracked
+seek_probe/uploaded/
 seek_probe/refs/*.wav
 seek_probe/refs/*.mp3
 # generated A/B verification audio clips

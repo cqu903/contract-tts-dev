@@ -1,16 +1,25 @@
-"""Segment index, seek mapping, contract loading."""
+"""Segment index, seek mapping, and uploaded-contract storage (content-addressed)."""
 from __future__ import annotations
+import hashlib
+import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from seek_probe.backend.segmenter import split_contract, estimate_duration
 
-_CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
-_CONTRACT_FILES = {
-    "sample": _CONTRACTS_DIR / "sample_contract.txt",
-    "zacl0603": _CONTRACTS_DIR / "zacl0603.txt",
-    "xcash": _CONTRACTS_DIR / "xcash.txt",
-}
+_DAY = 86400.0
+
+
+def compute_contract_id(text: str, template_id: str) -> str:
+    """Content-addressed id = sha256(template_id | text). Binds the raw text to its
+    template: same text under different templates yields different ids (different
+    segmentation → different seek). See ADR-0001 / ADR-0005."""
+    h = hashlib.sha256()
+    h.update(template_id.encode("utf-8"))
+    h.update(b"|")
+    h.update(text.encode("utf-8"))
+    return h.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -68,8 +77,52 @@ def dump_segments(idx: SegmentIndex, path: Path) -> Path:
     return path
 
 
-def load_contract_text(contract_id: str) -> str:
-    p = _CONTRACT_FILES.get(contract_id)
-    if p is None or not p.exists():
-        raise KeyError(f"unknown contract: {contract_id}")
-    return p.read_text(encoding="utf-8")
+class ContractStore:
+    """Disk-backed store of uploaded contract raw text, content-addressed by contract_id.
+
+    Originals are kept for ~3 months (creation TTL) so an upload stays seekable /
+    re-slicable without re-upload. See ADR-0001 / ADR-0004."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.manifest_path = self.root / "manifest.json"
+        self._manifest: dict[str, dict] = self._load()
+
+    def _load(self) -> dict:
+        if self.manifest_path.exists():
+            return json.loads(self.manifest_path.read_text("utf-8"))
+        return {}
+
+    def _save(self) -> None:
+        self.manifest_path.write_text(json.dumps(self._manifest, ensure_ascii=False), "utf-8")
+
+    def _path(self, contract_id: str) -> Path:
+        return self.root / f"{contract_id}.txt"
+
+    def put(self, contract_id: str, text: str, *, now: float | None = None) -> None:
+        ts = now if now is not None else time.time()
+        self._path(contract_id).write_text(text, encoding="utf-8")
+        # 内容寻址：相同 id 即相同文本，重复 put 幂等；保留首次写入时间
+        if contract_id not in self._manifest:
+            self._manifest[contract_id] = {"created_at": ts}
+            self._save()
+
+    def get(self, contract_id: str) -> str | None:
+        p = self._path(contract_id)
+        return p.read_text(encoding="utf-8") if p.exists() else None
+
+    def evict_expired(self, now: float, text_ttl_days: int = 90) -> int:
+        """删除创建时间超过 text_ttl_days 的原文（按 creation time）。"""
+        cutoff = now - text_ttl_days * _DAY
+        removed = 0
+        for cid in list(self._manifest.keys()):
+            if self._manifest[cid].get("created_at", 0.0) < cutoff:
+                p = self._path(cid)
+                if p.exists():
+                    p.unlink()
+                del self._manifest[cid]
+                removed += 1
+        if removed:
+            self._save()
+        return removed
