@@ -1,7 +1,7 @@
 [project]
-name = "cantonese-tts-probe"
+name = "cantonese-contract-tts"
 version = "0.0.0"
-description = "Cantonese contract-TTS seek/cache probe on GPT-SoVITS: segmentation + content-addressed cache + text normalization + seek mapping + web player."
+description = "Cantonese contract-TTS service: external TXT upload, content-addressed segmentation + per-segment normalization + seek, on GPT-SoVITS (local) or Bailian CosyVoice (cloud)."
 requires-python = ">=3.12"
 dependencies = [
     "cn2an>=0.5.24",
