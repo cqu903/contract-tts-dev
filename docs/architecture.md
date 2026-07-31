@@ -1,6 +1,6 @@
 # 架构说明(as-built,对外服务)
 
-> 本文描述**当前真实实现**(代码为准)。设计决策见 `docs/adr/`(ADR-0001..0006)+ `CONTEXT.md`(领域语言)。
+> 本文描述**当前真实实现**(代码为准)。设计决策见 `docs/adr/`(ADR-0001..0007)+ `CONTEXT.md`(领域语言)。
 
 ## 0. 一句话
 
@@ -139,7 +139,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 | `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
 | `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
 | `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`SEEK_PROBE_ENGINE=bailian` 启用 |
-| `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;启动 lifespan 淘汰 |
+| `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
 | `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
 | `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |
 | `refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、wav gitignored) |
@@ -179,10 +179,11 @@ POST /api/contracts  json={"text": "<合同原文>", "template_id": "xcash"}
 
 ## 10. 设计决策出处
 
-权威设计在 `docs/adr/`(ADR-0001..0006)+ `CONTEXT.md`。几处与"显而易见"做法不同的关键取舍:
+权威设计在 `docs/adr/`(ADR-0001..0007)+ `CONTEXT.md`。几处与"显而易见"做法不同的关键取舍:
 
 1. **TTS 回传**:"生成后响应 `Response` + 失败回 502/500",而非 tee 流式 `StreamingResponse`——为暴露引擎错误。
 2. **归一化层** `normalizer.py`:中文语境数字/金额/日期 → 粤语中文;英文地址/公司名 → L2 清洗保留英文。缓存键基于**归一化后**的文本。
 3. **`text_lang=yue` + L2**(非 `auto_yue`):避免英文后的 CJK 被引擎误判日语。
 4. **缓存键 = 归一化文本 + 引擎**(ADR-0006):换引擎不脏读;音色是引擎内部属性,不入键。
 5. **contract_id = sha256(template_id | 原文)**(ADR-0005):同原文按不同模板分段得不同 id。
+6. **过期清理 = 启动清 + 进程内 asyncio 每天 1 次**(ADR-0007):evict 同步直调、阻塞事件循环 ~27ms/天——**故意的**(丢 `to_thread` 会引入 manifest 竞态、需加锁);规模增长致阻塞可感知再优化。

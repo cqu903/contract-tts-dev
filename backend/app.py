@@ -1,7 +1,7 @@
 """FastAPI orchestrator for the external Cantonese contract-TTS service.
 
 Callers POST a contract TXT + template_id, get back a content-addressed contract_id,
-then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0006.
+then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
 
 Pipeline: upload → compute_contract_id → store raw text → build_index (deterministic
 split) → normalize_for_tts (per segment, on demand) → engine.synth → content-addressed

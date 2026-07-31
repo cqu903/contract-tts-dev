@@ -1,7 +1,7 @@
 # 启动与参数说明
 
 > 面向运维/新接手同事:怎么把对外服务跑起来、每个参数什么意思、出问题看哪里。
-> 架构与数据流见 `architecture.md`;引擎安装见 `engine-setup.md`。设计决策见 `docs/adr/`(ADR-0001..0006)。
+> 架构与数据流见 `architecture.md`;引擎安装见 `engine-setup.md`。设计决策见 `docs/adr/`(ADR-0001..0007)。
 
 ## 1. 系统组成
 

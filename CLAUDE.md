@@ -8,7 +8,7 @@
 
 ## 这是什么
 
-一个**对外粤语合同 TTS 服务**（由可行性探针演进而来）：调用方上传香港贷款 / 金融合同 TXT，服务用**粤语**朗读，带可拖动进度条与按段 seek。基于 **GPT-SoVITS**（本地）或 **百炼 CosyVoice**（云端）。核心思路：把全文确定性切片、把 seek 位置映射到第 N 段、内容寻址音频让静态样板只生成一次处处复用、并在合成前一刻对每段做归一化（数字 / 日期 / 金额 → 粤语读法）。代码在 `` 下；设计决策见 `docs/adr/`(ADR-0001..0006) + `CONTEXT.md`。
+一个**对外粤语合同 TTS 服务**（由可行性探针演进而来）：调用方上传香港贷款 / 金融合同 TXT，服务用**粤语**朗读，带可拖动进度条与按段 seek。基于 **GPT-SoVITS**（本地）或 **百炼 CosyVoice**（云端）。核心思路：把全文确定性切片、把 seek 位置映射到第 N 段、内容寻址音频让静态样板只生成一次处处复用、并在合成前一刻对每段做归一化（数字 / 日期 / 金额 → 粤语读法）。代码在 `` 下；设计决策见 `docs/adr/`(ADR-0001..0007) + `CONTEXT.md`。
 
 > 起源于 spike，v1 仍带探针气质：决策以"证明可行"优先于健壮性；引擎被刻意解耦，以便把音色质量风险单独隔离。
 
@@ -48,4 +48,4 @@ uv run python -c "from backend.normalizer import normalize_for_tts; print(normal
 
 - 测试对 `app.py` 用 FastAPI `TestClient`，靠 `monkeypatch.setattr(appmod, "engine" / "cache" / "CONTRACT_STORE")` 注入依赖（见 `tests/test_app.py`），HTTP client 已 mock —— 不需要真引擎。
 - 当引擎读错某个字（多音字、问题 token）时，**在 `normalizer.py` 里修**（同音字替换 / token 改写 —— 已有 `還→環`、`注：→注，` 先例），**绝不改合同原文**。
-- 深层设计上下文在 `docs/adr/`（ADR-0001..0006）与 `CONTEXT.md`（领域语言）；`docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。
+- 深层设计上下文在 `docs/adr/`（ADR-0001..0007）与 `CONTEXT.md`（领域语言）；`docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。

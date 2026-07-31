@@ -7,4 +7,4 @@
 
 **理由**：音频是算力 / 字符费的大头，按命中续期能让高频复用的样板段长期命中、把成本压到最低；原文是 PII 载体，按固定 TTL 限时留存便于核查又不过度堆积。
 
-**落地**：`cache.py` 的 `manifest.json` 扩展为 `{created_at, last_access_at, duration}`，`get` 命中时刷新 `last_access_at`；`ContractStore` 记原文 `created_at`；服务启动时各跑一次 `evict_expired`（音频 30d / 原文 90d）。
+**落地**：`cache.py` 的 `manifest.json` 扩展为 `{created_at, last_access_at, duration}`，`get` 命中时刷新 `last_access_at`；`ContractStore` 记原文 `created_at`。**清理触发**：服务启动时各跑一次 `evict_expired`，另有进程内 asyncio 周期任务每天 1 次（`run_cleanup()`，见 ADR-0007）。

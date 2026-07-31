@@ -2,7 +2,7 @@
 
 对外粤语合同朗读服务：调用方 `POST` 一份合同 TXT + `template_id`，拿回内容寻址的 `contract_id`，再按段取音频、自己播放、支持 seek。基于 GPT-SoVITS（本地）或百炼 CosyVoice（云端）。
 
-- **设计决策：** `docs/adr/`（ADR-0001..0006）+ `CONTEXT.md`（领域语言）
+- **设计决策：** `docs/adr/`（ADR-0001..0007）+ `CONTEXT.md`（领域语言）
 - **启动与运维：** `docs/running.md`
 - **引擎安装（本地 GPT-SoVITS）：** `docs/engine-setup.md`
 
@@ -28,7 +28,7 @@ DASHSCOPE_API_KEY=sk-... SEEK_PROBE_ENGINE=bailian uv run uvicorn backend.app:ap
 - `POST /api/contracts`  `{text, template_id}` → `{contract_id, total_est_s, segments}`
 - `GET /api/contracts/{id}` · `GET /api/contracts/{id}/segments/{n}`（audio/wav）· `POST /api/contracts/{id}/segments/{n}/preload`
 
-v1 仅接受 `template_id=xcash`；音色 / 引擎 / 语言由服务端固定。详见 ADR-0001..0006。
+v1 仅接受 `template_id=xcash`；音色 / 引擎 / 语言由服务端固定。详见 ADR-0001..0007。
 
 ## 测试
 ```
