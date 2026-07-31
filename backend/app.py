@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
@@ -37,7 +37,6 @@ ENGINE_URL = "http://127.0.0.1:9880"
 REF_AUDIO = str(ROOT / "refs" / "cantonese_ref_trim.wav")
 REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-8").strip() \
     if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
-VOICE_REF_ID = "cantonese_ref_v1"
 
 # --- 引擎选择 ---
 # 两个 client 都实现 synth(text) -> AsyncIterator[bytes]；归一化留在 app 层（共用
@@ -71,14 +70,46 @@ CONTRACT_STORE = ContractStore(UPLOADED_DIR)
 engine = make_engine()
 
 
+# --- 过期清理（ADR-0007）---
+# 启动时清一次 + 进程内 asyncio 周期任务（每天 1 次）。evict 同步直调、阻塞
+# ~27ms/天（benchmark：稳态 ~25k 音频 + ~1.5k 原文 manifest），可接受；不丢 to_thread
+# （会引入 manifest 跨线程竞态、需加锁）。规模增长致阻塞可感知时再上分批 / to_thread。
+_CLEANUP_INTERVAL_S = 86400  # 每天一次（硬编码 v1）
+
+
+def run_cleanup() -> None:
+    """跑一次过期清理：原文（90d）+ 音频（30d）。同步直调（ADR-0007）；
+    任一失败记日志、不抛（崩了下个周期照跑，最坏退化成只有启动清）。"""
+    now = time.time()
+    try:
+        rm_text = CONTRACT_STORE.evict_expired(now)
+        rm_audio = cache.evict_expired(now)
+        if rm_text or rm_audio:
+            print(f"[cleanup] evicted {rm_text} text / {rm_audio} audio", flush=True)
+    except Exception as e:
+        print(f"[cleanup] failed: {e}", flush=True)
+
+
+async def _periodic_cleanup() -> None:
+    """周期清理协程：每 _CLEANUP_INTERVAL_S 秒跑一次 run_cleanup（ADR-0007）。"""
+    while True:
+        await asyncio.sleep(_CLEANUP_INTERVAL_S)
+        run_cleanup()
+
+
 @asynccontextmanager
 async def lifespan(app):
-    # 启动时清一次过期项（ADR-0004：音频 30 天滑动窗口、原文 90 天）。
+    # 启动时清一次过期项（ADR-0004），复用 run_cleanup（ADR-0007）。
     # 放 lifespan 而非模块级，避免 import（如测试）时误清开发机上的真实数据。
-    now = time.time()
-    cache.evict_expired(now)
-    CONTRACT_STORE.evict_expired(now)
-    yield
+    run_cleanup()
+    # 周期清理任务：持引用防 GC；shutdown 时取消。
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(title="Cantonese Contract TTS Service", lifespan=lifespan)
@@ -139,7 +170,7 @@ async def _warm_segment(contract_id: str, seg_idx: int) -> None:
     try:
         idx = _load_idx_or_404(contract_id, seg_idx)
         tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-        key = cache_key(tts_text, VOICE_REF_ID, ENGINE_NAME)
+        key = cache_key(tts_text, ENGINE_NAME)
         await _synth_and_cache(key, tts_text)
     except Exception as e:
         print(f"[warm seg {seg_idx}] failed: {e}", flush=True)
@@ -168,7 +199,7 @@ def get_contract(contract_id: str):
 async def get_segment(contract_id: str, seg_idx: int):
     idx = _load_idx_or_404(contract_id, seg_idx)
     tts_text = normalize_for_tts(idx.segments[seg_idx].text)   # 阿拉伯数字 → 中文，确保读法正确
-    key = cache_key(tts_text, VOICE_REF_ID, ENGINE_NAME)
+    key = cache_key(tts_text, ENGINE_NAME)
     # 整段合成完再返回：引擎失败时能回明确的 502/500，而不是被浏览器吞成空 200（"Load failed"）。
     try:
         data = await _synth_and_cache(key, tts_text)
@@ -183,7 +214,7 @@ async def get_segment(contract_id: str, seg_idx: int):
 async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTasks):
     idx = _load_idx_or_404(contract_id, seg_idx)
     tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-    key = cache_key(tts_text, VOICE_REF_ID, ENGINE_NAME)
+    key = cache_key(tts_text, ENGINE_NAME)
     if cache.has(key):
         return {"status": "cached", "seg_idx": seg_idx}
 

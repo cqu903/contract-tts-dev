@@ -1,8 +1,10 @@
-"""Content-addressed segment cache. Key = hash(segment_text + voice_ref_id + engine_id).
+"""Content-addressed segment cache. Key = hash(segment_text + engine_id).
 Identical text (static boilerplate) reuses one file across contracts automatically.
 The engine is part of the key so switching SEEK_PROBE_ENGINE can't serve stale audio
-from the other engine (ADR-0006). Eviction is a sliding window: entries not hit within
-audio_ttl_days are removed, and every hit refreshes last_access_at (ADR-0004)."""
+from the other engine (ADR-0006). Voice is a fixed internal attribute of each engine,
+not a key dimension — changing it won't invalidate cache, see ADR-0006. Eviction is a
+sliding window: entries not hit within audio_ttl_days are removed, and every hit
+refreshes last_access_at (ADR-0004)."""
 from __future__ import annotations
 import hashlib
 import json
@@ -12,11 +14,9 @@ from pathlib import Path
 _DAY = 86400.0
 
 
-def cache_key(text: str, voice_ref_id: str, engine_id: str) -> str:
+def cache_key(text: str, engine_id: str) -> str:
     h = hashlib.sha256()
     h.update(text.encode("utf-8"))
-    h.update(b"|")
-    h.update(voice_ref_id.encode("utf-8"))
     h.update(b"|")
     h.update(engine_id.encode("utf-8"))
     return h.hexdigest()

@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 import backend.app as appmod
 from backend.cache import SegmentCache
@@ -92,3 +94,32 @@ def test_make_engine_bailian_reads_api_key_and_default_voice(monkeypatch):
 
 def test_make_engine_defaults_to_gptsovits():
     assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
+
+
+def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    now = time.time()
+    DAY = 86400
+    # 过期原文（>90d）+ 过期音频（>30d）
+    appmod.CONTRACT_STORE.put("coldcid", "old", now=now - 95 * DAY)
+    appmod.cache.put("coldkey", b"RIFFxxxx", duration=1.0, now=now - 35 * DAY)
+    # 未过期对照
+    appmod.CONTRACT_STORE.put("hotcid", "fresh", now=now)
+    appmod.cache.put("hotkey", b"RIFFyyyy", duration=1.0, now=now)
+
+    appmod.run_cleanup()
+
+    assert appmod.CONTRACT_STORE.get("coldcid") is None      # 过期原文被删
+    assert not appmod.cache.has("coldkey")                   # 过期音频被删
+    assert appmod.CONTRACT_STORE.get("hotcid") == "fresh"    # 未过期保留
+    assert appmod.cache.has("hotkey")
+
+
+def test_run_cleanup_swallows_errors(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(appmod.CONTRACT_STORE, "evict_expired", boom)
+    appmod.run_cleanup()   # 不抛即通过（ADR-0007：崩了下轮照跑）

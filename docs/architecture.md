@@ -20,7 +20,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 按需逐段归一化 normalize_for_tts (§6)          只在某段将要合成时执行,不批量
   │  显示文本 = 原始段文本(不回传调用方);归一化文本只喂引擎
   ▼
-缓存键 sha256(归一化文本 + VOICE_REF_ID + ENGINE_NAME)   (§4,ADR-0006)
+缓存键 sha256(归一化文本 + ENGINE_NAME)   (§4,ADR-0006)
   ├── 命中 → Response 回放 wav
   └── 未命中 → engine.synth (§5) → 落缓存 → 回传
 ```
@@ -56,7 +56,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
   │                                          text = ContractStore.get(id); 缺 → 404
   │                                          idx = build_index(id, text); seg_idx 越界 → 404
   │                                          tts_text = normalize_for_tts(seg.text)
-  │                                          key = sha256(tts_text + VOICE_REF_ID + ENGINE_NAME)
+  │                                          key = sha256(tts_text + ENGINE_NAME)
   │                                                       │
   │                                          ┌─── 命中?───┐
   │                                          是           否
@@ -79,12 +79,12 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 
 ## 4. 音频缓存逻辑(内容寻址,`cache.py`)
 
-- **key** = `sha256(归一化段文本 + "|" + VOICE_REF_ID + "|" + ENGINE_NAME)`。文本相同 + 同音色 + 同引擎 → 同 key。**引擎在键里**(ADR-0006):换引擎不会命中旧引擎音频(脏读)。
+- **key** = `sha256(归一化段文本 + "|" + ENGINE_NAME)`。文本相同 + 同引擎 → 同 key。**引擎在键里**(ADR-0006):换引擎不会命中旧引擎音频(脏读)。音色是引擎内部固定属性、不在键里——换音色须手动 bump `SEEK_PROBE_ENGINE` 或清 `cache/`,否则旧音最长存活 30 天(ADR-0006)。
 - 命中(`cache.get`)→ 回放文件;`get` 命中时刷新 `last_access_at`。
 - 未命中 → 生成、`cache.put`、回传。
 - **并发去重**:`_synth_and_cache` 用 per-key `asyncio.Lock` + 进锁后二次查缓存,同一未命中段的并发请求只生成一次。
 - **静态内容自动复用**:合同的静态 boilerplate 在所有合同里文本相同 → 同 key → 一处生成、处处复用(等价免费"预生成")。
-- **淘汰**(ADR-0004):30 天滑动窗口——`last_access_at` 超 30 天的条目由 `evict_expired` 删(命中即续期);服务启动 lifespan 跑一次。
+- **淘汰**(ADR-0004):30 天滑动窗口——`last_access_at` 超 30 天的条目由 `evict_expired` 删(命中即续期)。**清理触发**(ADR-0007):服务启动清一次 + 进程内 asyncio 周期任务每天 1 次(`run_cleanup()`,原文 90d + 音频 30d 合并;evict 同步直调、阻塞 ~27ms/天,故意的——见 ADR-0007)。
 - 存储:`cache/<sha256>.wav` + `cache/manifest.json`(key → `{created_at, last_access_at, duration}`)。
 
 ## 5. TTS 生成逻辑(`gptsovits_client.py` / `bailian_cosyvoice_client.py` / `app.py`)
@@ -92,7 +92,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 - 段文本先经 `normalize_for_tts`(见 §6)→ `tts_text`。
 - `engine.synth(tts_text)`:`POST {ENGINE_URL}/tts`,`json={text, text_lang="yue", ref_audio_path, prompt_text, prompt_lang="yue", media_type="wav", streaming_mode=False}`,`httpx` `trust_env=False`。引擎返回**整段 WAV**。
 - **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。引擎失败能回明确错误(`httpx.HTTPStatusError → 502`;连接失败/其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
-- **音色一致**:所有段共用 `REF_AUDIO = refs/cantonese_ref_trim.wav`(7s)+ `VOICE_REF_ID`。固定参考 = 任意 seek 顺序、缓存命中或新生成,都是同一个人声。
+- **音色一致**:所有段共用 `REF_AUDIO = refs/cantonese_ref_trim.wav`(7s)。固定参考 = 任意 seek 顺序、缓存命中或新生成,都是同一个人声。
 - **引擎可切换**(`app.make_engine`,`SEEK_PROBE_ENGINE` env):默认 `gptsovits`(本地);`SEEK_PROBE_ENGINE=bailian` 切云端 `cosyvoice-v3-flash` + 原生粤语音色(`BAILIAN_VOICE`,默认 `longjiaxin_v3`)。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。**两个 client 都无 `engine_id` 属性**——缓存键的 `ENGINE_NAME` 取自 `app` 模块全局(读 `SEEK_PROBE_ENGINE` env);切换引擎需重启服务。
   - 云端 client(`bailian_cosyvoice_client.py`)是两步:POST `SpeechSynthesizer` 拿 JSON 里的 audio url → GET 下载流式字节;`trust_env=False` 绕代理;`DASHSCOPE_API_KEY` 必须设。云端引擎**不需参考音**(用系统音色),音色一致由固定 `voice` 保证。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构。
@@ -135,7 +135,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 |---|---|
 | `backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
 | `backend/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
-| `backend/cache.py` | `cache_key(text, voice_ref_id, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
+| `backend/cache.py` | `cache_key(text, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
 | `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
 | `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
 | `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`SEEK_PROBE_ENGINE=bailian` 启用 |
@@ -167,7 +167,7 @@ POST /api/contracts  json={"text": "<合同原文>", "template_id": "xcash"}
 
 ## 9. 约束与后续
 
-- **单实例**(ADR-0003):per-key 锁 `_locks` 是进程内 dict、缓存/原文是本地盘;多实例需换分布式锁 + 共享存储。
+- **单实例**(ADR-0003):per-key 锁 `_locks` 与后台清理任务(ADR-0007)都是进程内;缓存/原文是本地盘;多实例需换分布式锁 + 共享存储 + 避免多副本重复扫。
 - **不校验归属**(ADR-0002):`contract_id` 作 bearer 凭证、裸 URL,接受 IDOR 残余风险。
 - **留存**(ADR-0004):原文 90d creation TTL、音频 30d 滑动窗口(命中续期)。
 - **参考音频必须 3–10 秒**(GPT-SoVITS 硬规则);当前用 `cantonese_ref_trim.wav`(7s)。
@@ -184,5 +184,5 @@ POST /api/contracts  json={"text": "<合同原文>", "template_id": "xcash"}
 1. **TTS 回传**:"生成后响应 `Response` + 失败回 502/500",而非 tee 流式 `StreamingResponse`——为暴露引擎错误。
 2. **归一化层** `normalizer.py`:中文语境数字/金额/日期 → 粤语中文;英文地址/公司名 → L2 清洗保留英文。缓存键基于**归一化后**的文本。
 3. **`text_lang=yue` + L2**(非 `auto_yue`):避免英文后的 CJK 被引擎误判日语。
-4. **缓存键 = 归一化文本 + 音色 + 引擎**(ADR-0006):换引擎不脏读。
+4. **缓存键 = 归一化文本 + 引擎**(ADR-0006):换引擎不脏读;音色是引擎内部属性,不入键。
 5. **contract_id = sha256(template_id | 原文)**(ADR-0005):同原文按不同模板分段得不同 id。
