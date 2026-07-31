@@ -39,7 +39,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
        磁盘: uploaded/<cid>.txt(原文) + cache/<sha256>.wav + manifest.json
 ```
 
-- **引擎进程**:`/Users/roy/codes/GPT-SoVITS` 独立 py3.10 venv,常驻 `api_v2.py`,暴露 `POST /tts`。
+- **引擎进程**:本地 GPT-SoVITS 仓库(独立 py3.10 venv,安装见 `docs/engine-setup.md`),常驻 `api_v2.py`,暴露 `POST /tts`。
 - **后端进程**:本项目 py3.12 venv,`uvicorn backend.app:app --port 8000`。
 - **存储**:`uploaded/`(原文,gitignored)、`cache/`(音频,gitignored)。
 - 浏览器与后端走 `:8000`;后端调引擎走 `:9880`(`httpx trust_env=False`,绕过本机 clash 代理)。

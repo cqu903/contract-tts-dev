@@ -5,7 +5,7 @@ GPT-SoVITS 跑在**独立 venv**(Python 3.10),与本项目的 3.12 隔离。引�
 ## 1. 克隆(同级目录)
 
 ```bash
-cd /Users/roy/codes
+cd /path/to/parent
 git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git
 cd GPT-SoVITS
 ```
@@ -35,15 +35,15 @@ uv pip install -p .venv -r requirements.txt
 ## 5. 启动 API(独立终端,常驻)
 
 ```bash
-cd /Users/roy/codes/GPT-SoVITS
+cd /path/to/GPT-SoVITS
 uv run python api_v2.py      # 默认 127.0.0.1:9880
 ```
 
 ## 6. 验证粤语(冒烟)
 
 ```bash
-REF=/Users/roy/codes/audio-with-qwen3-tts/refs/cantonese_ref.wav
-PROMPT=$(cat /Users/roy/codes/audio-with-qwen3-tts/refs/cantonese_ref.txt)
+REF=refs/cantonese_ref.wav
+PROMPT=$(cat refs/cantonese_ref.txt)
 curl -s -X POST http://127.0.0.1:9880/tts \
   -H 'Content-Type: application/json' \
   -d "{\"text\":\"甲方應於三日內支付訂金。\",\"text_lang\":\"yue\",\"ref_audio_path\":\"$REF\",\"prompt_text\":\"$PROMPT\",\"prompt_lang\":\"yue\",\"media_type\":\"wav\",\"streaming_mode\":false}" \

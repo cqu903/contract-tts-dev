@@ -19,7 +19,7 @@
 
 ```bash
 # 终端 1:引擎(安装见 engine-setup.md)
-cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
+cd /path/to/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
 
 # 终端 2:后端 + 前端
 uv run uvicorn backend.app:app --port 8000

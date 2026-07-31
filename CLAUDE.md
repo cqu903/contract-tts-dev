@@ -24,7 +24,7 @@ uv run uvicorn backend.app:app --port 8000  # 起服务，开 http://127.0.0.1:8
 uv run python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"
 ```
 
-**本地 TTS 引擎**是独立仓库 `/Users/roy/codes/GPT-SoVITS`（Python 3.10 venv）：`cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py`（监听 `:9880`）。安装步骤与踩坑见 `docs/engine-setup.md`。**测试不依赖引擎**（客户端已 mock）。
+**本地 TTS 引擎**是独立仓库 `/path/to/GPT-SoVITS`（Python 3.10 venv）：`cd /path/to/GPT-SoVITS && uv run python api_v2.py`（监听 `:9880`）。安装步骤与踩坑见 `docs/engine-setup.md`。**测试不依赖引擎**（客户端已 mock）。
 
 ## 架构（全局视角）
 

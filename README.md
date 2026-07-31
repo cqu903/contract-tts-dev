@@ -11,7 +11,7 @@
 ### A. 本地 GPT-SoVITS（默认）
 1. 起引擎（独立仓库 / 独立终端，见 `docs/engine-setup.md`）：
    ```
-   cd /Users/roy/codes/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
+   cd /path/to/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
    ```
 2. 起服务：
    ```
