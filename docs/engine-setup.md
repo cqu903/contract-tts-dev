@@ -32,6 +32,22 @@ uv pip install -p .venv -r requirements.txt
 - 把该音频的**粤语转写**写到:`refs/cantonese_ref_trim.txt`(整段文本,作 `prompt_text`)。`app.py` 读的就是这两个 trim 文件。
 - 没有的话:自己录一段后裁到 3–10 秒,或用公开粤语短音频裁剪;只需一个固定粤语参考。
 
+参考音决定音色、口音、韵律,但**不影响字的基本读音**(那由 `text_lang=yue` + 归一化负责);想让合成更地道港式,关键是参考音里的人本身就说地道港式粤语。
+
+### 替换参考音(换音色 / 换口音)
+
+1. 录约 1 分钟干净粤语素材,挑最地道的 5-8 秒裁出(mono):
+   ```bash
+   ffmpeg -ss <起点秒> -t <5-8> -i in.wav -ac 1 refs/cantonese_ref_trim.wav
+   ```
+   (Audacity 图形裁剪亦可;可裁 2-3 段分别试听择优)
+2. 把**裁出片段**的逐字粤语转写覆盖到 `refs/cantonese_ref_trim.txt` —— 必须与音频逐字对齐,否则克隆质量下降。
+3. **清缓存**(音色不入缓存键,ADR-0006;不清的话旧音最长存活 30 天):
+   ```bash
+   rm -rf cache/        # 或 bump CONTRACT_TTS_ENGINE(如 gptsovits-v2) 后重启服务
+   ```
+4. 重启服务、试听一段确认音色 / 口音。
+
 ## 5. 启动 API(独立终端,常驻)
 
 ```bash
