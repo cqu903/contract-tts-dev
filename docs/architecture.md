@@ -79,7 +79,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 
 ## 4. 音频缓存逻辑(内容寻址,`cache.py`)
 
-- **key** = `sha256(归一化段文本 + "|" + ENGINE_NAME)`。文本相同 + 同引擎 → 同 key。**引擎在键里**(ADR-0006):换引擎不会命中旧引擎音频(脏读)。音色是引擎内部固定属性、不在键里——换音色须手动 bump `SEEK_PROBE_ENGINE` 或清 `cache/`,否则旧音最长存活 30 天(ADR-0006)。
+- **key** = `sha256(归一化段文本 + "|" + ENGINE_NAME)`。文本相同 + 同引擎 → 同 key。**引擎在键里**(ADR-0006):换引擎不会命中旧引擎音频(脏读)。音色是引擎内部固定属性、不在键里——换音色须手动 bump `CONTRACT_TTS_ENGINE` 或清 `cache/`,否则旧音最长存活 30 天(ADR-0006)。
 - 命中(`cache.get`)→ 回放文件;`get` 命中时刷新 `last_access_at`。
 - 未命中 → 生成、`cache.put`、回传。
 - **并发去重**:`_synth_and_cache` 用 per-key `asyncio.Lock` + 进锁后二次查缓存,同一未命中段的并发请求只生成一次。
@@ -93,7 +93,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 - `engine.synth(tts_text)`:`POST {ENGINE_URL}/tts`,`json={text, text_lang="yue", ref_audio_path, prompt_text, prompt_lang="yue", media_type="wav", streaming_mode=False}`,`httpx` `trust_env=False`。引擎返回**整段 WAV**。
 - **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。引擎失败能回明确错误(`httpx.HTTPStatusError → 502`;连接失败/其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
 - **音色一致**:所有段共用 `REF_AUDIO = refs/cantonese_ref_trim.wav`(7s)。固定参考 = 任意 seek 顺序、缓存命中或新生成,都是同一个人声。
-- **引擎可切换**(`app.make_engine`,`SEEK_PROBE_ENGINE` env):默认 `gptsovits`(本地);`SEEK_PROBE_ENGINE=bailian` 切云端 `cosyvoice-v3-flash` + 原生粤语音色(`BAILIAN_VOICE`,默认 `longjiaxin_v3`)。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。**两个 client 都无 `engine_id` 属性**——缓存键的 `ENGINE_NAME` 取自 `app` 模块全局(读 `SEEK_PROBE_ENGINE` env);切换引擎需重启服务。
+- **引擎可切换**(`app.make_engine`,`CONTRACT_TTS_ENGINE` env):默认 `gptsovits`(本地);`CONTRACT_TTS_ENGINE=bailian` 切云端 `cosyvoice-v3-flash` + 原生粤语音色(`BAILIAN_VOICE`,默认 `longjiaxin_v3`)。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。**两个 client 都无 `engine_id` 属性**——缓存键的 `ENGINE_NAME` 取自 `app` 模块全局(读 `CONTRACT_TTS_ENGINE` env);切换引擎需重启服务。
   - 云端 client(`bailian_cosyvoice_client.py`)是两步:POST `SpeechSynthesizer` 拿 JSON 里的 audio url → GET 下载流式字节;`trust_env=False` 绕代理;`DASHSCOPE_API_KEY` 必须设。云端引擎**不需参考音**(用系统音色),音色一致由固定 `voice` 保证。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构。
 
@@ -138,7 +138,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 | `backend/cache.py` | `cache_key(text, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
 | `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
 | `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
-| `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`SEEK_PROBE_ENGINE=bailian` 启用 |
+| `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`CONTRACT_TTS_ENGINE=bailian` 启用 |
 | `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
 | `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
 | `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |

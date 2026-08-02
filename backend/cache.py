@@ -1,6 +1,6 @@
 """Content-addressed segment cache. Key = hash(segment_text + engine_id).
 Identical text (static boilerplate) reuses one file across contracts automatically.
-The engine is part of the key so switching SEEK_PROBE_ENGINE can't serve stale audio
+The engine is part of the key so switching CONTRACT_TTS_ENGINE can't serve stale audio
 from the other engine (ADR-0006). Voice is a fixed internal attribute of each engine,
 not a key dimension — changing it won't invalidate cache, see ADR-0006. Eviction is a
 sliding window: entries not hit within audio_ttl_days are removed, and every hit

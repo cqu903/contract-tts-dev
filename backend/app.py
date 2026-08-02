@@ -31,7 +31,7 @@ FRONTEND_DIR = ROOT / "frontend"
 CACHE_DIR = ROOT / "cache"
 UPLOADED_DIR = ROOT / "uploaded"
 
-# --- 探针配置（硬编码） ---
+# --- 本地引擎配置（硬编码） ---
 ENGINE_URL = "http://127.0.0.1:9880"
 # NOTE: GPT-SoVITS 拒绝 3-10s 以外的参考音；用裁好的 7s 参考。
 REF_AUDIO = str(ROOT / "refs" / "cantonese_ref_trim.wav")
@@ -41,8 +41,8 @@ REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-
 # --- 引擎选择 ---
 # 两个 client 都实现 synth(text) -> AsyncIterator[bytes]；归一化留在 app 层（共用
 # normalizer.py），换引擎无需改动别处。
-# SEEK_PROBE_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
-ENGINE_NAME = os.getenv("SEEK_PROBE_ENGINE", "gptsovits")
+# CONTRACT_TTS_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
+ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
 BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语（粤语/英文）
 
 # 已知如何切片/归一化的模板。v1：仅 xcash（ADR-0005）。
@@ -50,7 +50,7 @@ KNOWN_TEMPLATES = {"xcash"}
 
 
 def make_engine(name: str | None = None):
-    """构造 TTS 引擎。name=None -> 读 SEEK_PROBE_ENGINE 环境变量（默认 gptsovits）。"""
+    """构造 TTS 引擎。name=None -> 读 CONTRACT_TTS_ENGINE 环境变量（默认 gptsovits）。"""
     name = name or ENGINE_NAME
     if name == "bailian":
         return BailianCosyVoiceClient(
@@ -98,18 +98,18 @@ async def _periodic_cleanup() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app: FastAPI):
     # 启动时清一次过期项（ADR-0004），复用 run_cleanup（ADR-0007）。
     # 放 lifespan 而非模块级，避免 import（如测试）时误清开发机上的真实数据。
     run_cleanup()
-    # 周期清理任务：持引用防 GC；shutdown 时取消。
-    cleanup_task = asyncio.create_task(_periodic_cleanup())
+    # 周期清理任务：挂 app.state 持引用防 GC；shutdown 时取消。
+    app.state.cleanup_task = asyncio.create_task(_periodic_cleanup())
     try:
         yield
     finally:
-        cleanup_task.cancel()
+        app.state.cleanup_task.cancel()
         with suppress(asyncio.CancelledError):
-            await cleanup_task
+            await app.state.cleanup_task
 
 
 app = FastAPI(title="Cantonese Contract TTS Service", lifespan=lifespan)

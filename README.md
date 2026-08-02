@@ -21,7 +21,7 @@
 
 ### B. 云端 Bailian CosyVoice（无需本地引擎 / 参考音）
 ```
-DASHSCOPE_API_KEY=sk-... SEEK_PROBE_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
+DASHSCOPE_API_KEY=sk-... CONTRACT_TTS_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
 ```
 
 ## 对外接口
