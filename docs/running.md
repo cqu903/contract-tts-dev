@@ -68,7 +68,7 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | 要做什么 | 怎么做 |
 |---|---|
 | 换引擎 | 改 `CONTRACT_TTS_ENGINE` **重启服务**(无需手动清缓存;键含引擎,旧引擎缓存自动失效、由 30 天滑动窗口清理——ADR-0006) |
-| 换本地参考音 | 替换 `refs/cantonese_ref_trim.*` 后**须手动清 `cache/` 或 bump `CONTRACT_TTS_ENGINE`**,否则旧音最长存活 30 天(音色不入键,ADR-0006) |
+| 换本地参考音 | 替换 `refs/cantonese_ref_trim.*` 后**须手动清 `cache/` 或 bump `CONTRACT_TTS_ENGINE`**,否则旧音最长存活 30 天(音色不入键,ADR-0006;完整步骤见 `engine-setup.md` §4) |
 | 过期项清理 | **自动**:服务启动清一次 + 后台每 24h 清一次(原文 90d / 音频 30d,ADR-0007);正常无需手动 `rm` |
 | 看某段实际喂引擎的文本 | `python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
 | 看切片结果 | 对上传后的 contract_id 调 `contract.dump_segments(build_index(cid, text), path)` |
