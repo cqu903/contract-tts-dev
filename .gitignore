@@ -17,6 +17,9 @@ raw_dumps/
 # SDD workspace (git-ignored scratch)
 .superpowers/
 
+# CodeGraph local index (per-machine SQLite knowledge graph; do not commit)
+.codegraph/
+
 # data dirs (gitignored)
 cache/
 # uploaded contract originals (external uploads) — PII, never tracked
