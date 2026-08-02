@@ -28,9 +28,9 @@ uv pip install -p .venv -r requirements.txt
 
 ## 4. 粤语参考音频(voice-clone 锚)
 
-- 放约 5s 干净粤语人声到:`refs/cantonese_ref.wav`(mono,16k/24k/48k)。
-- 把该音频的**粤语转写**写到:`refs/cantonese_ref.txt`(整段文本,作 `prompt_text`)。
-- 没有的话:自己录 ~5 秒,或用公开粤语短音频;穿刺只需一个固定粤语参考。
+- 准备一段 **3–10 秒**干净粤语人声(GPT-SoVITS 硬性要求,否则报 `参考音频在3~10秒范围外`)放到:`refs/cantonese_ref_trim.wav`(mono,16k/24k/48k)。
+- 把该音频的**粤语转写**写到:`refs/cantonese_ref_trim.txt`(整段文本,作 `prompt_text`)。`app.py` 读的就是这两个 trim 文件。
+- 没有的话:自己录一段后裁到 3–10 秒,或用公开粤语短音频裁剪;只需一个固定粤语参考。
 
 ## 5. 启动 API(独立终端,常驻)
 
@@ -42,8 +42,8 @@ uv run python api_v2.py      # 默认 127.0.0.1:9880
 ## 6. 验证粤语(冒烟)
 
 ```bash
-REF=refs/cantonese_ref.wav
-PROMPT=$(cat refs/cantonese_ref.txt)
+REF=refs/cantonese_ref_trim.wav
+PROMPT=$(cat refs/cantonese_ref_trim.txt)
 curl -s -X POST http://127.0.0.1:9880/tts \
   -H 'Content-Type: application/json' \
   -d "{\"text\":\"甲方應於三日內支付訂金。\",\"text_lang\":\"yue\",\"ref_audio_path\":\"$REF\",\"prompt_text\":\"$PROMPT\",\"prompt_lang\":\"yue\",\"media_type\":\"wav\",\"streaming_mode\":false}" \

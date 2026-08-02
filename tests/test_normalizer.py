@@ -200,7 +200,7 @@ def test_haan4_words_untouched():
 # --- 注： token makes the engine misread the next word -> comma ---
 
 def test_zhu_colon_to_comma():
-    # probe (2026-07): 注：港幣 misreads 港幣; 注， / 注。 / 金額：港幣 all fine.
+    # verified (2026-07): 注：港幣 misreads 港幣; 注， / 注。 / 金額：港幣 all fine.
     # The trigger is the 注： token itself, not the colon character.
     assert normalize_for_tts("注：HK$26,000.00之首次") == "注，港幣二万六千之首次"
     assert normalize_for_tts("註：借款人") == "註，借款人"
