@@ -38,7 +38,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cantonese-tts-probe"
+name = "cantonese-contract-tts"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
