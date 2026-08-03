@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +38,15 @@ from backend.templates import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_project_env(dotenv_path: Path = ROOT / ".env") -> None:
+    """Load local defaults without replacing explicitly configured environment."""
+    load_dotenv(dotenv_path=dotenv_path, override=False)
+
+
+_load_project_env()
+
 FRONTEND_DIR = ROOT / "frontend"
 CACHE_DIR = ROOT / "cache"
 UPLOADED_DIR = ROOT / "uploaded"

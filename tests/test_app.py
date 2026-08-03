@@ -1,5 +1,6 @@
-import time
 import hashlib
+import os
+import time
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
@@ -163,6 +164,22 @@ def test_make_engine_bailian_reads_api_key_and_default_voice(monkeypatch):
 
 def test_make_engine_defaults_to_gptsovits():
     assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
+
+
+def test_load_project_env_loads_defaults_without_overriding_environment(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "CONTRACT_TTS_TEST_FROM_FILE=loaded\n"
+        "CONTRACT_TTS_TEST_PRECEDENCE=from-file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CONTRACT_TTS_TEST_FROM_FILE", raising=False)
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PRECEDENCE", "from-environment")
+
+    appmod._load_project_env(env_file)
+
+    assert os.getenv("CONTRACT_TTS_TEST_FROM_FILE") == "loaded"
+    assert os.getenv("CONTRACT_TTS_TEST_PRECEDENCE") == "from-environment"
 
 
 def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):

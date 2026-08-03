@@ -45,6 +45,7 @@ dependencies = [
     { name = "cn2an" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -58,6 +59,7 @@ requires-dist = [
     { name = "cn2an", specifier = ">=0.5.24" },
     { name = "fastapi", specifier = ">=0.140.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
 ]
 
