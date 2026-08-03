@@ -139,15 +139,14 @@ Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_
 
 | 文件 | 职责 |
 |---|---|
-| `backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
-| `backend/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
-| `backend/cache.py` | `cache_key(template_id, text, engine_profile_id, cache_version)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
-| `backend/cn_numbers.py` | 粤语与普通话 normalizer 共用的中文数字逐位/基数转换 |
-| `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
-| `backend/normalizers.py` | `normalize_for_tts_zh` / `normalize_for_tts_en`；普通话和英语的独立 TTS 读法规则 |
-| `backend/segmenters.py` | `split_contract_zh` / `split_contract_en` 与对应时长估算 |
-| `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang` 按 profile 设置,`trust_env=False`);本地第一阶段仅粤语 |
-| `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端按 Template 绑定对应 voice |
+| `backend/text/segmenter.py` / `segmenters.py` | 中文与英文切分、`Segment` 和对应时长估算 |
+| `backend/text/normalizer.py` / `normalizers.py` | 粤语、普通话和英语的独立 TTS normalizer |
+| `backend/text/cn_numbers.py` | 粤语与普通话 normalizer 共用的中文数字逐位/基数转换 |
+| `backend/storage/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
+| `backend/storage/cache.py` | `cache_key(template_id, text, engine_profile_id, cache_version)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
+| `backend/engines/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang` 按 profile 设置,`trust_env=False`);本地第一阶段仅粤语 |
+| `backend/engines/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端按 Template 绑定对应 voice |
+| `backend/{normalizer,normalizers,segmenter,segmenters,cn_numbers,contract,cache,...}.py` | 旧 import 路径的兼容导出，不放业务实现 |
 | `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`; Template Registry 与 profile 选择;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
 | `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
 | `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |

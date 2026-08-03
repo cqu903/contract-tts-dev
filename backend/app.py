@@ -21,10 +21,15 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.contract import build_index, compute_contract_id, ContractStore, SegmentIndex
-from backend.cache import cache_key, SegmentCache
-from backend.gptsovits_client import GPTSoVITSClient
-from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
+from backend.storage.contract import (
+    ContractStore,
+    SegmentIndex,
+    build_index,
+    compute_contract_id,
+)
+from backend.storage.cache import SegmentCache, cache_key
+from backend.engines.gptsovits_client import GPTSoVITSClient
+from backend.engines.bailian_cosyvoice_client import BailianCosyVoiceClient
 from backend.templates import (
     TemplateProfile,
     build_template_registry,

@@ -4,10 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from backend.normalizer import normalize_for_tts
-from backend.segmenter import Segment, estimate_duration, split_contract
-from backend.normalizers import normalize_for_tts_en, normalize_for_tts_zh
-from backend.segmenters import estimate_duration_en, estimate_duration_zh, split_contract_en, split_contract_zh
+from backend.text.normalizer import normalize_for_tts
+from backend.text.segmenter import Segment, estimate_duration, split_contract
+from backend.text.normalizers import normalize_for_tts_en, normalize_for_tts_zh
+from backend.text.segmenters import (
+    estimate_duration_en,
+    estimate_duration_zh,
+    split_contract_en,
+    split_contract_zh,
+)
 
 
 @dataclass(frozen=True)

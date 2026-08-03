@@ -37,3 +37,6 @@ contracts/*
 # OS / logs
 .DS_Store
 *.log
+
+# IDE metadata (project-local settings)
+.idea/
