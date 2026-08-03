@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 服务注册并接受 `xcash_yue`，同时把 `xcash` 规范化为 `xcash_yue`；未知 Template 返回 `400`
 - [x] Template Profile 能独立提供合同语言、朗读语言、切分规则、normalizer 和 Engine Profile
@@ -15,4 +15,4 @@
 
 ## Comments
 
-Implemented with a Template Registry, canonical `xcash_yue` aliasing, persisted Template metadata, profile-selected engine providers, versioned cache identities, and legacy-cache isolation. `uv run pytest -q` passes 71 tests; `uv run python -m compileall -q backend` passes.
+Implemented with a Template Registry, canonical `xcash_yue` aliasing, persisted Template metadata, profile-selected engine providers, versioned cache identities, and legacy-cache isolation. The complete multilingual suite passes 84 tests; `uv run python -m compileall -q backend` passes.
