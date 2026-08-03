@@ -195,6 +195,23 @@ def test_project_path_from_env_supports_relative_and_absolute_paths(tmp_path, mo
     ) == absolute_path
 
 
+def test_main_runs_combined_app_with_uvicorn(monkeypatch):
+    call = {}
+
+    def fake_run(application, **kwargs):
+        call["application"] = application
+        call["kwargs"] = kwargs
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    appmod.main()
+
+    assert call == {
+        "application": appmod.app,
+        "kwargs": {"host": "127.0.0.1", "port": 8000},
+    }
+
+
 def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     now = time.time()

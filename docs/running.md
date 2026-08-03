@@ -37,6 +37,9 @@ Copy-Item .env.example .env
 uv run uvicorn backend.app:app --port 8000
 ```
 
+也可以在 IntelliJ IDEA / PyCharm 中右键运行 `backend/app.py`；其内置入口会在
+`127.0.0.1:8000` 同时启动 API 和静态前端。
+
 `.env` 包含密钥并已被 Git 忽略；`.env.example` 只保存可提交的配置模板。系统或进程中已经设置的环境变量优先于 `.env`。
 修改 `.env` 后需要重启服务，应用启动时才会重新读取 Engine Profile。
 

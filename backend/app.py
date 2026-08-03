@@ -11,9 +11,14 @@ Seek maps a progress position onto a segment boundary.
 from __future__ import annotations
 import asyncio
 import os
+import sys
 import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+
+# Allow `python backend/app.py` and IDE "Run app.py" in addition to module import.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 from dotenv import load_dotenv
@@ -331,3 +336,14 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
 # frontend/ 是上传 demo；守卫一下，frontend 缺失时 import app（测试）也不崩
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
+
+def main() -> None:
+    """Run the combined API and static frontend directly from an IDE."""
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+
+if __name__ == "__main__":
+    main()
