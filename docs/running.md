@@ -29,6 +29,19 @@ uv run uvicorn backend.app:app --port 8000
 
 ### B. 云端 Bailian CosyVoice(无需本地引擎/参考音)
 
+PowerShell 推荐使用本地 `.env` 文件：
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env，填写 DASHSCOPE_API_KEY 和需要覆盖的 voice
+uv run uvicorn backend.app:app --env-file .env --port 8000
+```
+
+`.env` 包含密钥并已被 Git 忽略；`.env.example` 只保存可提交的配置模板。
+修改 `.env` 后需要重启服务，应用启动时才会重新读取 Engine Profile。
+
+也可以直接设置进程环境变量：
+
 ```bash
 export DASHSCOPE_API_KEY=sk-...
 CONTRACT_TTS_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
