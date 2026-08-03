@@ -104,6 +104,15 @@ def test_mandarin_segmenter_bounds_unpunctuated_text_and_keeps_ascii_ids_whole()
     assert any("ACCOUNT-1234567890" in segment.text for segment in with_identifier)
 
 
+def test_mandarin_segmenter_repairs_connectors_labels_and_punctuation_fragments():
+    text = "第一項；\n和\n第二項。\n地址：\n香港中環。\n4.\n資料收集"
+
+    segments = [segment.text for segment in split_contract_zh(text)]
+
+    assert segments == ["第一項；", "和第二項。", "地址：香港中環。", "4.資料收集"]
+    assert not any(segment in {"和", "及", "或", "以及", "。"} for segment in segments)
+
+
 def test_english_segmenter_keeps_words_whole():
     segments = split_contract_en(
         "The borrower shall pay the amount. The lender may terminate the agreement.",

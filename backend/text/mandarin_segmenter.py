@@ -20,6 +20,9 @@ _CLAUSE_END = "，、："
 _LEFT_BOUNDARY = "，、：；。！？）】》」』)"
 _RIGHT_BOUNDARY = "（【《「『("
 _ASCII_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/@+-]*")
+_PUNCTUATION_ONLY = re.compile(r"^[，、：；。！？）】》」』)］]+$")
+_NUMBER_HEADING = re.compile(r"^(?:\d+|[A-Za-z])[.．]$")
+_FORWARD_CONNECTORS = {"和", "及", "或", "以及"}
 
 
 def _split_keep_delimiter(text: str, delimiters: str) -> list[str]:
@@ -95,6 +98,53 @@ def _pack_clauses(pieces: list[str], target: int, soft_max: int) -> list[str]:
     return packed
 
 
+def _is_forward_fragment(text: str) -> bool:
+    return (
+        text in _FORWARD_CONNECTORS
+        or bool(_NUMBER_HEADING.fullmatch(text))
+        or (len(text) <= 8 and text.endswith(("：", ":")))
+    )
+
+
+def _repair_fragments(segments: list[Segment]) -> list[Segment]:
+    """Repair fragments that would sound unnatural as standalone Mandarin."""
+    repaired: list[str] = []
+    pending = ""
+
+    for segment in segments:
+        text = segment.text.strip()
+        if not text:
+            continue
+
+        if _PUNCTUATION_ONLY.fullmatch(text):
+            if repaired:
+                repaired[-1] += text
+            else:
+                pending += text
+            continue
+
+        if _is_forward_fragment(text):
+            pending += text
+            continue
+
+        if repaired and repaired[-1].endswith(tuple(_RIGHT_BOUNDARY)):
+            opening = repaired[-1][-1]
+            repaired[-1] = repaired[-1][:-1].rstrip()
+            text = opening + text
+
+        if pending:
+            text = pending + text
+            pending = ""
+        repaired.append(text)
+
+    if pending:
+        if repaired:
+            repaired[-1] += pending
+        else:
+            repaired.append(pending)
+    return [Segment(text) for text in repaired if text]
+
+
 def split_contract_zh(text: str, *, target: int = TARGET, soft_max: int = SOFT_MAX,
                       hard_max: int = HARD_MAX) -> list[Segment]:
     """Split Mandarin contract text using Mandarin-specific pause rules.
@@ -128,7 +178,7 @@ def split_contract_zh(text: str, *, target: int = TARGET, soft_max: int = SOFT_M
             segments.extend(
                 Segment(piece) for piece in _pack_clauses(pieces, target, soft_max)
             )
-    return segments
+    return _repair_fragments(segments)
 
 
 def estimate_duration_zh(text: str, rate: float = 4.0) -> float:
