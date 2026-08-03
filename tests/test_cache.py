@@ -2,14 +2,16 @@ from backend.cache import cache_key, SegmentCache
 
 
 def test_key_stable_for_same_text_engine_distinct_otherwise():
-    assert cache_key("你好", "e1") == cache_key("你好", "e1")
-    assert cache_key("你好", "e1") != cache_key("你好", "e2")   # different engine
-    assert cache_key("你好", "e1") != cache_key("再见", "e1")   # different text
+    assert cache_key("xcash_yue", "你好", "e1", "v1") == cache_key("xcash_yue", "你好", "e1", "v1")
+    assert cache_key("xcash_yue", "你好", "e1", "v1") != cache_key("xcash_yue", "你好", "e2", "v1")
+    assert cache_key("xcash_yue", "你好", "e1", "v1") != cache_key("xcash_zh", "你好", "e1", "v1")
+    assert cache_key("xcash_yue", "你好", "e1", "v1") != cache_key("xcash_yue", "再见", "e1", "v1")
+    assert cache_key("xcash_yue", "你好", "e1", "v1") != cache_key("xcash_yue", "你好", "e1", "v2")
 
 
 def test_put_then_get_roundtrip_and_access_refresh(tmp_path):
     c = SegmentCache(tmp_path / "cache")
-    key = cache_key("x", "e")
+    key = cache_key("xcash_yue", "x", "e", "v1")
     assert c.get(key) is None
     c.put(key, b"RIFFxxxx", duration=1.5, now=1000.0)
     assert c.has(key)
@@ -22,8 +24,8 @@ def test_put_then_get_roundtrip_and_access_refresh(tmp_path):
 
 def test_evict_removes_entries_not_hit_within_window(tmp_path):
     c = SegmentCache(tmp_path / "cache")
-    cold = cache_key("cold", "e")
-    hot = cache_key("hot", "e")
+    cold = cache_key("xcash_yue", "cold", "e", "v1")
+    hot = cache_key("xcash_yue", "hot", "e", "v1")
     c.put(cold, b"a", now=0.0)
     c.put(hot, b"b", now=0.0)
     c.get(hot, now=40 * 86400)          # hot hit at day 40

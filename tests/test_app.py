@@ -1,4 +1,6 @@
 import time
+import hashlib
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 import backend.app as appmod
@@ -60,6 +62,73 @@ def test_unknown_template_id_returns_400(tmp_path, monkeypatch):
     client = TestClient(appmod.app)
     r = client.post("/api/contracts", json={"text": "x", "template_id": "bogus"})
     assert r.status_code == 400
+
+
+def test_xcash_alias_and_canonical_template_share_new_contract_id(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    alias = _upload(client, text="同一份合同。", template_id="xcash")
+    canonical = _upload(client, text="同一份合同。", template_id="xcash_yue")
+
+    assert alias == canonical
+
+
+def test_unavailable_template_profile_returns_503_without_creating_contract(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    profile = appmod.TEMPLATE_REGISTRY["xcash_yue"]
+    unavailable = replace(
+        profile,
+        engine_profile=replace(profile.engine_profile, available=False),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", unavailable)
+    client = TestClient(appmod.app)
+
+    r = client.post("/api/contracts", json={"text": "不可用。", "template_id": "xcash_yue"})
+
+    assert r.status_code == 503
+    assert list((tmp_path / "uploaded").glob("*.txt")) == []
+
+
+def test_template_profile_selects_its_engine_provider(tmp_path, monkeypatch):
+    default_engine = _setup(tmp_path, monkeypatch)
+    selected_engine = FakeEngine()
+    profile = appmod.TEMPLATE_REGISTRY["xcash_yue"]
+    selected = replace(
+        profile,
+        engine_profile=replace(
+            profile.engine_profile,
+            engine_provider=lambda: selected_engine,
+        ),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", selected)
+    client = TestClient(appmod.app)
+
+    _upload(client, text="选择 profile。", template_id="xcash_yue")
+
+    assert selected_engine.calls == 1
+    assert default_engine.calls == 0
+
+
+def test_new_pipeline_does_not_hit_legacy_cache_key(tmp_path, monkeypatch):
+    fake = _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+    cid = _upload(client, text="第一句。第二句！")
+
+    from backend.normalizer import normalize_for_tts
+
+    tts_text = normalize_for_tts("第二句！")
+    legacy_key = hashlib.sha256(
+        f"{tts_text}|{appmod.ENGINE_NAME}".encode("utf-8")
+    ).hexdigest()
+    appmod.cache.put(legacy_key, b"legacy-audio")
+    baseline = fake.calls
+
+    response = client.get(f"/api/contracts/{cid}/segments/1")
+
+    assert response.status_code == 200
+    assert response.content != b"legacy-audio"
+    assert fake.calls == baseline + 1
 
 
 def test_unknown_contract_returns_404(tmp_path, monkeypatch):

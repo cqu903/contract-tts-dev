@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from backend.segmenter import split_contract, estimate_duration
+from backend.segmenter import estimate_duration, split_contract
 
 _DAY = 86400.0
 
@@ -37,11 +37,13 @@ class SegmentIndex:
     total_est_s: float
 
 
-def build_index(contract_id: str, text: str) -> SegmentIndex:
+def build_index(contract_id: str, text: str, *,
+                splitter=split_contract,
+                duration_estimator=estimate_duration) -> SegmentIndex:
     metas: list[SegmentMeta] = []
     t = 0.0
-    for i, seg in enumerate(split_contract(text)):
-        dur = estimate_duration(seg.text)
+    for i, seg in enumerate(splitter(text)):
+        dur = duration_estimator(seg.text)
         metas.append(SegmentMeta(i, seg.text, dur, t))
         t += dur
     return SegmentIndex(contract_id, metas, round(t, 3))
@@ -100,13 +102,21 @@ class ContractStore:
     def _path(self, contract_id: str) -> Path:
         return self.root / f"{contract_id}.txt"
 
-    def put(self, contract_id: str, text: str, *, now: float | None = None) -> None:
+    def put(self, contract_id: str, text: str, *, template_id: str | None = None,
+            now: float | None = None) -> None:
         ts = now if now is not None else time.time()
         self._path(contract_id).write_text(text, encoding="utf-8")
         # 内容寻址：相同 id 即相同文本，重复 put 幂等；保留首次写入时间
         if contract_id not in self._manifest:
             self._manifest[contract_id] = {"created_at": ts}
+            if template_id is not None:
+                self._manifest[contract_id]["template_id"] = template_id
             self._save()
+
+    def get_template_id(self, contract_id: str) -> str | None:
+        """Return the canonical Template recorded with a new Contract."""
+        entry = self._manifest.get(contract_id)
+        return entry.get("template_id") if entry else None
 
     def get(self, contract_id: str) -> str | None:
         p = self._path(contract_id)

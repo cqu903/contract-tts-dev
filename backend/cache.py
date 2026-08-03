@@ -1,4 +1,4 @@
-"""Content-addressed segment cache. Key = hash(segment_text + engine_id).
+"""Content-addressed segment cache. Key = hash(template_id + segment_text + profile + version).
 Identical text (static boilerplate) reuses one file across contracts automatically.
 The engine is part of the key so switching CONTRACT_TTS_ENGINE can't serve stale audio
 from the other engine (ADR-0006). Voice is a fixed internal attribute of each engine,
@@ -14,11 +14,16 @@ from pathlib import Path
 _DAY = 86400.0
 
 
-def cache_key(text: str, engine_id: str) -> str:
+def cache_key(template_id: str, text: str, engine_profile_id: str,
+              cache_version: str = "v1") -> str:
     h = hashlib.sha256()
+    h.update(template_id.encode("utf-8"))
+    h.update(b"|")
     h.update(text.encode("utf-8"))
     h.update(b"|")
-    h.update(engine_id.encode("utf-8"))
+    h.update(engine_profile_id.encode("utf-8"))
+    h.update(b"|")
+    h.update(cache_version.encode("utf-8"))
     return h.hexdigest()
 
 

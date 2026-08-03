@@ -1,11 +1,12 @@
-"""FastAPI orchestrator for the external Cantonese contract-TTS service.
+"""FastAPI orchestrator for the external multilingual contract-TTS service.
 
 Callers POST a contract TXT + template_id, get back a content-addressed contract_id,
 then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
 
-Pipeline: upload → compute_contract_id → store raw text → build_index (deterministic
-split) → normalize_for_tts (per segment, on demand) → engine.synth → content-addressed
-cache → audio/wav. Seek maps a progress position onto a segment boundary.
+Pipeline: upload → canonical Template lookup → compute_contract_id → store raw text
+and Template metadata → profile-specific deterministic split → profile-specific
+normalization → selected Engine Profile → content-addressed cache → audio/wav.
+Seek maps a progress position onto a segment boundary.
 """
 from __future__ import annotations
 import asyncio
@@ -24,7 +25,11 @@ from backend.contract import build_index, compute_contract_id, ContractStore, Se
 from backend.cache import cache_key, SegmentCache
 from backend.gptsovits_client import GPTSoVITSClient
 from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
-from backend.normalizer import normalize_for_tts
+from backend.templates import (
+    TemplateProfile,
+    build_template_registry,
+    canonical_template_id,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT / "frontend"
@@ -45,10 +50,6 @@ REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-
 ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
 BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语（粤语/英文）
 
-# 已知如何切片/归一化的模板。v1：仅 xcash（ADR-0005）。
-KNOWN_TEMPLATES = {"xcash"}
-
-
 def make_engine(name: str | None = None):
     """构造 TTS 引擎。name=None -> 读 CONTRACT_TTS_ENGINE 环境变量（默认 gptsovits）。"""
     name = name or ENGINE_NAME
@@ -68,6 +69,11 @@ class ContractUpload(BaseModel):
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
 engine = make_engine()
+TEMPLATE_REGISTRY = build_template_registry(
+    engine_name=ENGINE_NAME,
+    api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+    engine_provider=lambda: engine,
+)
 
 
 # --- 过期清理（ADR-0007）---
@@ -124,18 +130,52 @@ def _lock_for(key: str) -> asyncio.Lock:
     return _locks[key]
 
 
-def _load_idx_or_404(contract_id: str, seg_idx: int | None = None) -> SegmentIndex:
+def _profile_for_input(template_id: str) -> TemplateProfile:
+    try:
+        canonical = canonical_template_id(template_id, TEMPLATE_REGISTRY)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"unknown template_id: {template_id}")
+    profile = TEMPLATE_REGISTRY[canonical]
+    if not profile.engine_profile.available:
+        raise HTTPException(status_code=503, detail=f"template profile unavailable: {canonical}")
+    return profile
+
+
+def _load_idx_or_404(contract_id: str, seg_idx: int | None = None) -> tuple[SegmentIndex, TemplateProfile]:
     """取原文并切片；contract_id 未知 → 404；seg_idx 给定且越界 → 404。"""
     text = CONTRACT_STORE.get(contract_id)
-    if text is None:
+    template_id = CONTRACT_STORE.get_template_id(contract_id)
+    if text is None or template_id is None:
         raise HTTPException(status_code=404, detail="unknown contract")
-    idx = build_index(contract_id, text)
+    profile = TEMPLATE_REGISTRY.get(template_id)
+    if profile is None or not profile.engine_profile.available:
+        raise HTTPException(status_code=404, detail="unknown contract")
+    idx = build_index(
+        contract_id,
+        text,
+        splitter=profile.splitter,
+        duration_estimator=profile.duration_estimator,
+    )
     if seg_idx is not None and (seg_idx < 0 or seg_idx >= len(idx.segments)):
         raise HTTPException(status_code=404, detail="seg_idx out of range")
-    return idx
+    return idx, profile
 
 
-async def _synth_and_cache(key: str, tts_text: str) -> bytes:
+def _cache_identity(profile: TemplateProfile, tts_text: str) -> str:
+    engine_profile = profile.engine_profile
+    return cache_key(
+        profile.id,
+        tts_text,
+        engine_profile.id,
+        engine_profile.cache_version,
+    )
+
+
+def _engine_for(profile: TemplateProfile):
+    return profile.engine_profile.engine_provider()
+
+
+async def _synth_and_cache(key: str, tts_text: str, selected_engine) -> bytes:
     """合成音频并写入缓存，返回字节。命中缓存则直接读回；未命中则在 per-key 锁内
     合成（并发的相同请求只合成一次）。"""
     cached = cache.get(key)
@@ -146,7 +186,7 @@ async def _synth_and_cache(key: str, tts_text: str) -> bytes:
         if cached_again is not None:
             return cached_again.read_bytes()
         buf = bytearray()
-        async for chunk in engine.synth(tts_text):
+        async for chunk in selected_engine.synth(tts_text):
             buf.extend(chunk)
         data = bytes(buf)
         cache.put(key, data)
@@ -168,23 +208,27 @@ def _index_response(idx: SegmentIndex) -> dict:
 async def _warm_segment(contract_id: str, seg_idx: int) -> None:
     """后台把某段音频合成入缓存（上传时用于预热 seg 0）。"""
     try:
-        idx = _load_idx_or_404(contract_id, seg_idx)
-        tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-        key = cache_key(tts_text, ENGINE_NAME)
-        await _synth_and_cache(key, tts_text)
+        idx, profile = _load_idx_or_404(contract_id, seg_idx)
+        tts_text = profile.normalizer(idx.segments[seg_idx].text)
+        key = _cache_identity(profile, tts_text)
+        await _synth_and_cache(key, tts_text, _engine_for(profile))
     except Exception as e:
         print(f"[warm seg {seg_idx}] failed: {e}", flush=True)
 
 
 @app.post("/api/contracts")
 def upload_contract(body: ContractUpload, background_tasks: BackgroundTasks):
-    if body.template_id not in KNOWN_TEMPLATES:
-        raise HTTPException(status_code=400, detail=f"unknown template_id: {body.template_id}")
+    profile = _profile_for_input(body.template_id)
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="text is empty")
-    cid = compute_contract_id(body.text, body.template_id)
-    CONTRACT_STORE.put(cid, body.text)
-    idx = build_index(cid, body.text)
+    cid = compute_contract_id(body.text, profile.id)
+    CONTRACT_STORE.put(cid, body.text, template_id=profile.id)
+    idx = build_index(
+        cid,
+        body.text,
+        splitter=profile.splitter,
+        duration_estimator=profile.duration_estimator,
+    )
     # 预热 seg 0，让首次播放即点即响（前端上传后立即加载 seg 0）
     background_tasks.add_task(_warm_segment, cid, 0)
     return _index_response(idx)
@@ -192,17 +236,18 @@ def upload_contract(body: ContractUpload, background_tasks: BackgroundTasks):
 
 @app.get("/api/contracts/{contract_id}")
 def get_contract(contract_id: str):
-    return _index_response(_load_idx_or_404(contract_id))
+    idx, _profile = _load_idx_or_404(contract_id)
+    return _index_response(idx)
 
 
 @app.get("/api/contracts/{contract_id}/segments/{seg_idx}")
 async def get_segment(contract_id: str, seg_idx: int):
-    idx = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = normalize_for_tts(idx.segments[seg_idx].text)   # 阿拉伯数字 → 中文，确保读法正确
-    key = cache_key(tts_text, ENGINE_NAME)
+    idx, profile = _load_idx_or_404(contract_id, seg_idx)
+    tts_text = profile.normalizer(idx.segments[seg_idx].text)
+    key = _cache_identity(profile, tts_text)
     # 整段合成完再返回：引擎失败时能回明确的 502/500，而不是被浏览器吞成空 200（"Load failed"）。
     try:
-        data = await _synth_and_cache(key, tts_text)
+        data = await _synth_and_cache(key, tts_text, _engine_for(profile))
         return Response(data, media_type="audio/wav")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
@@ -212,15 +257,15 @@ async def get_segment(contract_id: str, seg_idx: int):
 
 @app.post("/api/contracts/{contract_id}/segments/{seg_idx}/preload")
 async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTasks):
-    idx = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-    key = cache_key(tts_text, ENGINE_NAME)
+    idx, profile = _load_idx_or_404(contract_id, seg_idx)
+    tts_text = profile.normalizer(idx.segments[seg_idx].text)
+    key = _cache_identity(profile, tts_text)
     if cache.has(key):
         return {"status": "cached", "seg_idx": seg_idx}
 
     async def _bg():
         try:
-            await _synth_and_cache(key, tts_text)
+            await _synth_and_cache(key, tts_text, _engine_for(profile))
         except Exception as e:
             print(f"[preload seg {seg_idx}] failed: {e}", flush=True)
 

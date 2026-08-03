@@ -55,7 +55,7 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 |---|---|---|
 | `ENGINE_URL` | `http://127.0.0.1:9880` | 本地引擎地址 |
 | `REF_AUDIO` / `REF_PROMPT` | `refs/cantonese_ref_trim.{wav,txt}` | 本地引擎参考音(必须 3–10 秒) |
-| `KNOWN_TEMPLATES` | `{"xcash"}` | 接受的 `template_id`;v1 仅 xcash(ADR-0005) |
+| `TEMPLATE_REGISTRY` | `xcash_yue`, `xcash_zh`, `xcash_en` | 接受的 `template_id`; `xcash` 是 `xcash_yue` 别名 |
 
 > 合同由调用方 `POST /api/contracts {text, template_id}` 上传,**不再预注册、无 `?contract=`**。
 
@@ -80,7 +80,8 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 |---|---|
 | 取段音频 **500** | 本地引擎没起(:9880 连接失败);或代理劫持(代码已 `trust_env=False`,改 httpx 时保留) |
 | 取段音频 **502** | 引擎在但回错状态(看响应 detail) |
-| `POST /api/contracts` **400** | `template_id` 非 `xcash`,或 text 为空 |
+| `POST /api/contracts` **400** | `template_id` 未注册,或 text 为空 |
+| `POST /api/contracts` **503** | Template 已注册但对应 Engine Profile 未配置 |
 | `GET /api/contracts/{id}` **404** | contract_id 未知,或原文已被 90 天 TTL 清理 → 重新上传 |
 | 云端合成偶发 429 | cosyvoice-v3-flash 限流 3 QPM,预载并发排队,稍等重试 |
 | 浏览器音频时长显示巨大 | cosyvoice wav 头时长字段占位,按 EOF 播放,不影响功能 |

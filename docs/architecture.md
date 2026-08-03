@@ -9,7 +9,7 @@
 ## 0.5 数据处理主线(上传 → 出声)
 
 ```
-POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
+POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; xcash 为别名)
   │  contract_id = sha256(template_id | 原文)            内容寻址(ADR-0001/0005)
   ▼
 原文落盘 uploaded/<contract_id>.txt            (90 天 creation TTL,ADR-0004)
@@ -20,7 +20,7 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 按需逐段归一化 normalize_for_tts (§6)          只在某段将要合成时执行,不批量
   │  显示文本 = 原始段文本(不回传调用方);归一化文本只喂引擎
   ▼
-缓存键 sha256(归一化文本 + ENGINE_NAME)   (§4,ADR-0006)
+缓存键 sha256(Template + 归一化文本 + Engine Profile + 版本)   (ADR-0008)
   ├── 命中 → Response 回放 wav
   └── 未命中 → engine.synth (§5) → 落缓存 → 回传
 ```
@@ -135,11 +135,11 @@ POST /api/contracts {text, template_id}      (template_id v1 仅 xcash,ADR-0005)
 |---|---|
 | `backend/segmenter.py` | `split_contract`(target/soft_max/hard_max)、`estimate_duration`、`Segment` |
 | `backend/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
-| `backend/cache.py` | `cache_key(text, engine_id)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
+| `backend/cache.py` | `cache_key(template_id, text, engine_profile_id, cache_version)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
 | `backend/normalizer.py` | `normalize_for_tts`(英文片段 L2 + 中文语境数字/金额/日期 → 粤语中文) |
 | `backend/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang=yue`,`trust_env=False`);本地粤语引擎(默认) |
 | `backend/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端 cosyvoice,`CONTRACT_TTS_ENGINE=bailian` 启用 |
-| `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`;`make_engine`;`KNOWN_TEMPLATES={"xcash"}`;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
+| `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`; Template Registry 与 profile 选择;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
 | `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
 | `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |
 | `refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、wav gitignored) |
@@ -153,7 +153,7 @@ POST /api/contracts  json={"text": "<合同原文>", "template_id": "xcash"}
 → {"contract_id": "<sha256>", "total_est_s": ..., "segments": [{seg_idx, est_dur_s, cumulative_start_s}, ...]}
 ```
 
-- `template_id` 必传、v1 仅 `xcash`(未知 → 400,ADR-0005)。
+- `template_id` 必传，接受 `xcash_yue`、`xcash_zh`、`xcash_en`，`xcash` 为 `xcash_yue` 别名(未知 → 400)。
 - 同原文 → 同 `contract_id`(内容寻址,可复用;`sha256(template_id | 原文)`)。
 - 上传后台预热 seg 0;不回传段文本(调用方已有原文)。
 
@@ -184,6 +184,6 @@ POST /api/contracts  json={"text": "<合同原文>", "template_id": "xcash"}
 1. **TTS 回传**:"生成后响应 `Response` + 失败回 502/500",而非 tee 流式 `StreamingResponse`——为暴露引擎错误。
 2. **归一化层** `normalizer.py`:中文语境数字/金额/日期 → 粤语中文;英文地址/公司名 → L2 清洗保留英文。缓存键基于**归一化后**的文本。
 3. **`text_lang=yue` + L2**(非 `auto_yue`):避免英文后的 CJK 被引擎误判日语。
-4. **缓存键 = 归一化文本 + 引擎**(ADR-0006):换引擎不脏读;音色是引擎内部属性,不入键。
+4. **缓存键 = Template + 归一化文本 + Engine Profile + 版本**(ADR-0008):不同语言、音色和 profile 配置严格隔离；旧格式缓存不参与新请求命中。
 5. **contract_id = sha256(template_id | 原文)**(ADR-0005):同原文按不同模板分段得不同 id。
 6. **过期清理 = 启动清 + 进程内 asyncio 每天 1 次**(ADR-0007):evict 同步直调、阻塞事件循环 ~27ms/天——**故意的**(丢 `to_thread` 会引入 manifest 竞态、需加锁);规模增长致阻塞可感知再优化。
