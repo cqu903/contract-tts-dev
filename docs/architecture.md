@@ -139,7 +139,9 @@ Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_
 
 | 文件 | 职责 |
 |---|---|
-| `backend/text/segmenter.py` / `segmenters.py` | 中文与英文切分、`Segment` 和对应时长估算 |
+| `backend/text/segmenter.py` | 粤语合同切分、`Segment` 和粤语时长估算 |
+| `backend/text/mandarin_segmenter.py` | 普通话独立句末/分句/长段兜底规则与时长估算 |
+| `backend/text/segmenters.py` | 英文句末及单词边界切分与时长估算 |
 | `backend/text/normalizer.py` / `normalizers.py` | 粤语、普通话和英语的独立 TTS normalizer |
 | `backend/text/cn_numbers.py` | 粤语与普通话 normalizer 共用的中文数字逐位/基数转换 |
 | `backend/storage/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |

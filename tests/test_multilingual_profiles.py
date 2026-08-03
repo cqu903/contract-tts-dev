@@ -6,7 +6,13 @@ import backend.app as appmod
 from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 from backend.gptsovits_client import GPTSoVITSClient
 from backend.normalizers import normalize_for_tts_en, normalize_for_tts_zh
-from backend.segmenters import estimate_duration_en, estimate_duration_zh, split_contract_en, split_contract_zh
+from backend.segmenter import split_contract
+from backend.segmenters import (
+    estimate_duration_en,
+    estimate_duration_zh,
+    split_contract_en,
+    split_contract_zh,
+)
 from backend.templates import build_template_registry
 from tests.test_app import FakeEngine
 
@@ -68,6 +74,34 @@ def test_mandarin_segmenter_is_independent_and_has_its_own_duration_rate():
 
     assert [s.text for s in split_contract_zh(text)] == ["第一句。", "第二句！"]
     assert estimate_duration_zh("普通话") != estimate_duration_en("普通话")
+
+
+def test_mandarin_segmenter_has_its_own_bracket_and_hard_limit_rules():
+    text = "甲" * 30 + "（" + "乙" * 25 + "）。\n第二行。"
+
+    mandarin = split_contract_zh(text, target=12, soft_max=24, hard_max=30)
+    cantonese = split_contract(text, target=12, soft_max=24, hard_max=30)
+
+    assert [len(segment.text) for segment in mandarin] == [30, 28, 4]
+    assert mandarin[1].text.startswith("（")
+    assert cantonese[0].text.endswith("（")
+    assert [segment.text for segment in mandarin] != [segment.text for segment in cantonese]
+
+
+def test_mandarin_segmenter_bounds_unpunctuated_text_and_keeps_ascii_ids_whole():
+    unpunctuated = "甲" * 130 + "。"
+    identifier = "條款前文" + "ACCOUNT-1234567890" + "條款後文" * 8 + "。"
+
+    bounded = split_contract_zh(unpunctuated)
+    with_identifier = split_contract_zh(
+        identifier,
+        target=12,
+        soft_max=24,
+        hard_max=30,
+    )
+
+    assert max(len(segment.text) for segment in bounded) <= 54
+    assert any("ACCOUNT-1234567890" in segment.text for segment in with_identifier)
 
 
 def test_english_segmenter_keeps_words_whole():

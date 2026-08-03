@@ -3,18 +3,7 @@ from __future__ import annotations
 
 import re
 
-from .segmenter import Segment, split_contract
-
-
-def split_contract_zh(text: str) -> list[Segment]:
-    """Split a Mandarin contract with independently tunable Chinese limits."""
-    return split_contract(text, target=22, soft_max=48, hard_max=52)
-
-
-def estimate_duration_zh(text: str, rate: float = 4.0) -> float:
-    """Estimate Mandarin speech duration by non-whitespace character count."""
-    count = sum(1 for char in text if not char.isspace())
-    return round(count / rate, 3)
+from .segmenter import Segment
 
 
 _EN_SENTENCE_END = re.compile(r"(?<=[.!?;])(?:\s+|$)")

@@ -7,12 +7,8 @@ from typing import Callable
 from backend.text.normalizer import normalize_for_tts
 from backend.text.segmenter import Segment, estimate_duration, split_contract
 from backend.text.normalizers import normalize_for_tts_en, normalize_for_tts_zh
-from backend.text.segmenters import (
-    estimate_duration_en,
-    estimate_duration_zh,
-    split_contract_en,
-    split_contract_zh,
-)
+from backend.text.mandarin_segmenter import estimate_duration_zh, split_contract_zh
+from backend.text.segmenters import estimate_duration_en, split_contract_en
 
 
 @dataclass(frozen=True)
