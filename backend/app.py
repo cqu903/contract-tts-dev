@@ -51,12 +51,28 @@ FRONTEND_DIR = ROOT / "frontend"
 CACHE_DIR = ROOT / "cache"
 UPLOADED_DIR = ROOT / "uploaded"
 
-# --- 本地引擎配置（硬编码） ---
-ENGINE_URL = "http://127.0.0.1:9880"
+
+def _project_path_from_env(name: str, default: str) -> Path:
+    """Resolve an environment-configured path relative to the project root."""
+    path = Path(os.getenv(name, default)).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+# --- 本地引擎配置 ---
+ENGINE_URL = os.getenv("GPTSOVITS_ENGINE_URL", "http://127.0.0.1:9880")
 # NOTE: GPT-SoVITS 拒绝 3-10s 以外的参考音；用裁好的 7s 参考。
-REF_AUDIO = str(ROOT / "refs" / "cantonese_ref_trim.wav")
-REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-8").strip() \
-    if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
+REF_AUDIO_PATH = _project_path_from_env(
+    "GPTSOVITS_REF_AUDIO", "refs/cantonese_ref_trim.wav"
+)
+REF_PROMPT_PATH = _project_path_from_env(
+    "GPTSOVITS_REF_PROMPT", "refs/cantonese_ref_trim.txt"
+)
+REF_AUDIO = str(REF_AUDIO_PATH)
+REF_PROMPT = (
+    REF_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    if REF_PROMPT_PATH.exists()
+    else ""
+)
 
 # --- 引擎选择 ---
 # 两个 client 都实现 synth(text) -> AsyncIterator[bytes]；归一化留在 app 层（共用

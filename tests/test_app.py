@@ -182,6 +182,19 @@ def test_load_project_env_loads_defaults_without_overriding_environment(tmp_path
     assert os.getenv("CONTRACT_TTS_TEST_PRECEDENCE") == "from-environment"
 
 
+def test_project_path_from_env_supports_relative_and_absolute_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PATH", "refs/custom.wav")
+    assert appmod._project_path_from_env(
+        "CONTRACT_TTS_TEST_PATH", "unused.wav"
+    ) == appmod.ROOT / "refs" / "custom.wav"
+
+    absolute_path = tmp_path / "custom.wav"
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PATH", str(absolute_path))
+    assert appmod._project_path_from_env(
+        "CONTRACT_TTS_TEST_PATH", "unused.wav"
+    ) == absolute_path
+
+
 def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     now = time.time()

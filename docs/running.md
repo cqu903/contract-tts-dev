@@ -59,6 +59,9 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `CONTRACT_TTS_ENGINE` | `gptsovits` | 引擎:`gptsovits`(本地)/ `bailian`(云端)。**切换需重启服务** |
+| `GPTSOVITS_ENGINE_URL` | `http://127.0.0.1:9880` | 本地 GPT-SoVITS 服务地址；指向不同模型时同步提升粤语 profile 缓存版本 |
+| `GPTSOVITS_REF_AUDIO` | `refs/cantonese_ref_trim.wav` | 本地参考音频路径(必须 3–10 秒)；支持项目根目录相对路径或绝对路径 |
+| `GPTSOVITS_REF_PROMPT` | `refs/cantonese_ref_trim.txt` | 本地参考文本路径；支持项目根目录相对路径或绝对路径 |
 | `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需 |
 | `BAILIAN_VOICE` | `longjiaxin_v3` | 云端粤语音色;更换时同步提升 `ENGINE_PROFILE_CACHE_VERSION_YUE` |
 | `BAILIAN_VOICE_ZH` | `longxiaochun` | 云端普通话音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_ZH` |
@@ -67,12 +70,10 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | `ENGINE_PROFILE_CACHE_VERSION_ZH` | `v1` | 普通话 profile 缓存版本;换 voice/model/参数时提升 |
 | `ENGINE_PROFILE_CACHE_VERSION_EN` | `v1` | 英语 profile 缓存版本;换 voice/model/参数时提升 |
 
-### 硬编码常量(`backend/app.py` 顶部,改需动代码)
+### 代码内固定配置
 
 | 常量 | 值 | 说明 |
 |---|---|---|
-| `ENGINE_URL` | `http://127.0.0.1:9880` | 本地引擎地址 |
-| `REF_AUDIO` / `REF_PROMPT` | `refs/cantonese_ref_trim.{wav,txt}` | 本地引擎参考音(必须 3–10 秒) |
 | `TEMPLATE_REGISTRY` | `xcash_yue`, `xcash_zh`, `xcash_en` | 接受的 `template_id`; `xcash` 是 `xcash_yue` 别名 |
 
 本地 GPT-SoVITS 第一阶段只提供 `xcash_yue`;在本地模式选择 `xcash_zh` 或
