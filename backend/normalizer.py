@@ -28,36 +28,10 @@ from __future__ import annotations
 import re
 from cn2an import an2cn
 
-_DIGIT_CN = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
-             "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+from backend.cn_numbers import digits_to_cn as _digits_to_cn
+from backend.cn_numbers import number_to_cn as _num_to_cn
 
 _PUA_BASE = 0xE000  # Private Use Area start; placeholders for stashed English runs
-
-
-def _digits_to_cn(s: str) -> str:
-    return "".join(_DIGIT_CN[c] for c in s if c in _DIGIT_CN)
-
-
-def _num_to_cn(num: str) -> str:
-    """'2864000' -> '二百八十六万四千'; '5.25' -> '五點二五'; '0.5' -> '零點五'."""
-    num = num.replace(",", "")
-    if "." in num:
-        int_part, dec_part = num.split(".", 1)
-        int_cn = _int_to_cn(int_part) if int_part else "零"
-        if dec_part.strip("0") == "":   # ".00" etc. -> whole number; drop the decimal
-            return int_cn
-        return int_cn + "點" + _digits_to_cn(dec_part)
-    return _int_to_cn(num)
-
-
-def _int_to_cn(int_part: str) -> str:
-    """Cardinal reading via cn2an. Long reference/account numbers that exceed
-    cn2an's range (>16 digits, e.g. loan-agreement number 1279857891713384448)
-    fall back to digit-by-digit -- they are IDs, not cardinal quantities."""
-    try:
-        return an2cn(int_part)
-    except ValueError:
-        return _digits_to_cn(int_part)
 
 
 # --- L2: English-run cleanup (for the engine's auto_yue English frontend) ---

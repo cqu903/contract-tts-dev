@@ -1,7 +1,7 @@
 # 启动与参数说明
 
 > 面向运维/新接手同事:怎么把对外服务跑起来、每个参数什么意思、出问题看哪里。
-> 架构与数据流见 `architecture.md`;引擎安装见 `engine-setup.md`。设计决策见 `docs/adr/`(ADR-0001..0007)。
+> 架构与数据流见 `architecture.md`;引擎安装见 `engine-setup.md`。设计决策见 `docs/adr/`(ADR-0001..0008)。
 
 ## 1. 系统组成
 
@@ -47,7 +47,12 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 |---|---|---|
 | `CONTRACT_TTS_ENGINE` | `gptsovits` | 引擎:`gptsovits`(本地)/ `bailian`(云端)。**切换需重启服务** |
 | `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需 |
-| `BAILIAN_VOICE` | `longjiaxin_v3` | 云端音色(粤语女);换它**不**改缓存键(音色不入键,ADR-0006),须手动清 `cache/` 或 bump `CONTRACT_TTS_ENGINE` |
+| `BAILIAN_VOICE` | `longjiaxin_v3` | 云端粤语音色;更换时同步提升 `ENGINE_PROFILE_CACHE_VERSION_YUE` |
+| `BAILIAN_VOICE_ZH` | `longxiaochun` | 云端普通话音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_ZH` |
+| `BAILIAN_VOICE_EN` | `longanyang` | 云端英语音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_EN` |
+| `ENGINE_PROFILE_CACHE_VERSION_YUE` | `v1` | 粤语 profile 缓存版本;影响音频的配置变化时提升 |
+| `ENGINE_PROFILE_CACHE_VERSION_ZH` | `v1` | 普通话 profile 缓存版本;换 voice/model/参数时提升 |
+| `ENGINE_PROFILE_CACHE_VERSION_EN` | `v1` | 英语 profile 缓存版本;换 voice/model/参数时提升 |
 
 ### 硬编码常量(`backend/app.py` 顶部,改需动代码)
 
@@ -56,6 +61,10 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | `ENGINE_URL` | `http://127.0.0.1:9880` | 本地引擎地址 |
 | `REF_AUDIO` / `REF_PROMPT` | `refs/cantonese_ref_trim.{wav,txt}` | 本地引擎参考音(必须 3–10 秒) |
 | `TEMPLATE_REGISTRY` | `xcash_yue`, `xcash_zh`, `xcash_en` | 接受的 `template_id`; `xcash` 是 `xcash_yue` 别名 |
+
+本地 GPT-SoVITS 第一阶段只提供 `xcash_yue`;在本地模式选择 `xcash_zh` 或
+`xcash_en` 会在上传阶段返回 `503`。云端 Bailian 在配置 API key 后提供三个
+独立 profile。
 
 > 合同由调用方 `POST /api/contracts {text, template_id}` 上传,**不再预注册、无 `?contract=`**。
 
@@ -68,7 +77,7 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | 要做什么 | 怎么做 |
 |---|---|
 | 换引擎 | 改 `CONTRACT_TTS_ENGINE` **重启服务**(无需手动清缓存;键含引擎,旧引擎缓存自动失效、由 30 天滑动窗口清理——ADR-0006) |
-| 换本地参考音 | 替换 `refs/cantonese_ref_trim.*` 后**须手动清 `cache/` 或 bump `CONTRACT_TTS_ENGINE`**,否则旧音最长存活 30 天(音色不入键,ADR-0006;完整步骤见 `engine-setup.md` §4) |
+| 换本地参考音 | 替换 `refs/cantonese_ref_trim.*` 后提升 `ENGINE_PROFILE_CACHE_VERSION_YUE`，使旧音频不再命中；完整步骤见 `engine-setup.md` §4 |
 | 过期项清理 | **自动**:服务启动清一次 + 后台每 24h 清一次(原文 90d / 音频 30d,ADR-0007);正常无需手动 `rm` |
 | 看某段实际喂引擎的文本 | `python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
 | 看切片结果 | 对上传后的 contract_id 调 `contract.dump_segments(build_index(cid, text), path)` |

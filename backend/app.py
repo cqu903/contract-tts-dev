@@ -48,17 +48,36 @@ REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-
 # normalizer.py），换引擎无需改动别处。
 # CONTRACT_TTS_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
 ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
-BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语（粤语/英文）
+BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语
+BAILIAN_VOICE_ZH = os.getenv("BAILIAN_VOICE_ZH", "longxiaochun")
+BAILIAN_VOICE_EN = os.getenv("BAILIAN_VOICE_EN", "longanyang")
+ENGINE_LANGUAGE_SETTINGS = {
+    "yue": {"voice": BAILIAN_VOICE, "text_lang": "yue", "prompt_lang": "yue"},
+    "zh": {"voice": BAILIAN_VOICE_ZH, "text_lang": "zh", "prompt_lang": "zh"},
+    "en": {"voice": BAILIAN_VOICE_EN, "text_lang": "en", "prompt_lang": "en"},
+}
+ENGINE_PROFILE_CACHE_VERSIONS = {
+    language: os.getenv(f"ENGINE_PROFILE_CACHE_VERSION_{language.upper()}", "v1")
+    for language in ENGINE_LANGUAGE_SETTINGS
+}
 
-def make_engine(name: str | None = None):
+
+def make_engine(name: str | None = None, reading_language: str = "yue"):
     """构造 TTS 引擎。name=None -> 读 CONTRACT_TTS_ENGINE 环境变量（默认 gptsovits）。"""
     name = name or ENGINE_NAME
+    settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
         return BailianCosyVoiceClient(
             api_key=os.getenv("DASHSCOPE_API_KEY", ""),
-            voice=BAILIAN_VOICE,
+            voice=settings["voice"],
         )
-    return GPTSoVITSClient(ENGINE_URL, REF_AUDIO, REF_PROMPT)
+    return GPTSoVITSClient(
+        ENGINE_URL,
+        REF_AUDIO,
+        REF_PROMPT,
+        text_lang=settings["text_lang"],
+        prompt_lang=settings["prompt_lang"],
+    )
 
 
 class ContractUpload(BaseModel):
@@ -73,6 +92,11 @@ TEMPLATE_REGISTRY = build_template_registry(
     engine_name=ENGINE_NAME,
     api_key=os.getenv("DASHSCOPE_API_KEY", ""),
     engine_provider=lambda: engine,
+    engine_providers={
+        "zh": lambda: make_engine(ENGINE_NAME, "zh"),
+        "en": lambda: make_engine(ENGINE_NAME, "en"),
+    },
+    cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
 )
 
 
