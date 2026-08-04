@@ -37,6 +37,26 @@ Copy-Item .env.example .env
 uv run uvicorn backend.app:app --port 8000
 ```
 
+百炼传输协议由 `.env` 选择。中国内地旧 HTTP 接口示例：
+
+```dotenv
+BAILIAN_TRANSPORT=http
+BAILIAN_HTTP_BASE_URL=https://dashscope.aliyuncs.com
+BAILIAN_MODEL=cosyvoice-v3-flash
+```
+
+新加坡 WebSocket 接口示例：
+
+```dotenv
+BAILIAN_TRANSPORT=wss
+BAILIAN_WS_URL=wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference
+BAILIAN_MODEL=cosyvoice-v3-flash
+BAILIAN_WORKSPACE_ID=
+```
+
+若控制台提供业务空间专属 API Host，应使用对应的 `wss://.../api-ws/v1/inference`
+地址并填写 `BAILIAN_WORKSPACE_ID`。API Key、端点、模型和音色必须属于同一地域。
+
 也可以在 IntelliJ IDEA / PyCharm 中右键运行 `backend/app.py`；其内置入口会在
 `127.0.0.1:8000` 同时启动 API 和静态前端。
 
@@ -49,6 +69,18 @@ uv run uvicorn backend.app:app --port 8000
 export DASHSCOPE_API_KEY=sk-...
 CONTRACT_TTS_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
 ```
+
+新加坡节点只支持 WebSocket TTS 时，可先独立运行诊断脚本，不经过合同切分、
+归一化或缓存：
+
+```powershell
+uv run python scripts/debug_bailian_singapore_tts.py --check-config
+uv run python scripts/debug_bailian_singapore_tts.py
+```
+
+脚本默认使用已验证的新加坡公共 WebSocket 地址；若控制台提供了专属 API Host，
+通过 `--url` 指定其 `wss://.../api-ws/v1/inference` 地址。可用 `--model`、
+`--voice`、`--text` 和 `--output` 覆盖测试参数，脚本不会输出完整 API Key。
 
 ### 打开 demo
 
@@ -66,6 +98,11 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | `GPTSOVITS_REF_AUDIO` | `refs/cantonese_ref_trim.wav` | 本地参考音频路径(必须 3–10 秒)；支持项目根目录相对路径或绝对路径 |
 | `GPTSOVITS_REF_PROMPT` | `refs/cantonese_ref_trim.txt` | 本地参考文本路径；支持项目根目录相对路径或绝对路径 |
 | `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需 |
+| `BAILIAN_TRANSPORT` | `http` | 百炼协议：`http` 或 `wss`；新加坡使用 `wss` |
+| `BAILIAN_HTTP_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP SpeechSynthesizer 基础地址 |
+| `BAILIAN_WS_URL` | `wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference` | WebSocket TTS 地址 |
+| `BAILIAN_MODEL` | `cosyvoice-v3-flash` | 百炼模型；更换时提升所有受影响 profile 的缓存版本 |
+| `BAILIAN_WORKSPACE_ID` | 无 | 可选业务空间 ID；使用专属 API Host 时按控制台配置 |
 | `BAILIAN_VOICE` | `longjiaxin_v3` | 云端粤语音色;更换时同步提升 `ENGINE_PROFILE_CACHE_VERSION_YUE` |
 | `BAILIAN_VOICE_ZH` | `longxiaochun` | 云端普通话音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_ZH` |
 | `BAILIAN_VOICE_EN` | `longanyang` | 云端英语音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_EN` |

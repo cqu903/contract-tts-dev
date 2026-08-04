@@ -35,7 +35,10 @@ from backend.storage.contract import (
 )
 from backend.storage.cache import SegmentCache, cache_key
 from backend.engines.gptsovits_client import GPTSoVITSClient
-from backend.engines.bailian_cosyvoice_client import BailianCosyVoiceClient
+from backend.engines.bailian_cosyvoice_client import (
+    BailianCosyVoiceClient,
+    BailianSynthesisError,
+)
 from backend.templates import (
     TemplateProfile,
     build_template_registry,
@@ -84,6 +87,16 @@ REF_PROMPT = (
 # normalizer.py），换引擎无需改动别处。
 # CONTRACT_TTS_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
 ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
+BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
+BAILIAN_HTTP_BASE_URL = os.getenv(
+    "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
+)
+BAILIAN_WS_URL = os.getenv(
+    "BAILIAN_WS_URL",
+    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference",
+)
+BAILIAN_MODEL = os.getenv("BAILIAN_MODEL", "cosyvoice-v3-flash")
+BAILIAN_WORKSPACE_ID = os.getenv("BAILIAN_WORKSPACE_ID") or None
 BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语
 BAILIAN_VOICE_ZH = os.getenv("BAILIAN_VOICE_ZH", "longxiaochun")
 BAILIAN_VOICE_EN = os.getenv("BAILIAN_VOICE_EN", "longanyang")
@@ -105,7 +118,12 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
     if name == "bailian":
         return BailianCosyVoiceClient(
             api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+            model=BAILIAN_MODEL,
             voice=settings["voice"],
+            transport_mode=BAILIAN_TRANSPORT,
+            http_base_url=BAILIAN_HTTP_BASE_URL,
+            ws_url=BAILIAN_WS_URL,
+            workspace=BAILIAN_WORKSPACE_ID,
         )
     return GPTSoVITSClient(
         ENGINE_URL,
@@ -311,6 +329,8 @@ async def get_segment(contract_id: str, seg_idx: int):
         return Response(data, media_type="audio/wav")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
+    except BailianSynthesisError as e:
+        raise HTTPException(status_code=502, detail=f"engine failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"tts failed: {e}")
 

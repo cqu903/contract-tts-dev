@@ -162,6 +162,26 @@ def test_make_engine_bailian_reads_api_key_and_default_voice(monkeypatch):
     assert e.voice == "longjiaxin_v3"   # native Cantonese voice (粤语/英文)
 
 
+def test_make_engine_passes_bailian_transport_configuration(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-x")
+    monkeypatch.setattr(appmod, "BAILIAN_TRANSPORT", "wss")
+    monkeypatch.setattr(appmod, "BAILIAN_MODEL", "cosyvoice-v3-flash")
+    monkeypatch.setattr(
+        appmod,
+        "BAILIAN_WS_URL",
+        "wss://workspace.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference",
+    )
+    monkeypatch.setattr(appmod, "BAILIAN_WORKSPACE_ID", "ws-test")
+
+    engine = appmod.make_engine("bailian", "en")
+
+    assert engine.transport_mode == "wss"
+    assert engine.model == "cosyvoice-v3-flash"
+    assert engine.voice == appmod.BAILIAN_VOICE_EN
+    assert engine.ws_url.startswith("wss://workspace.ap-southeast-1")
+    assert engine.workspace == "ws-test"
+
+
 def test_make_engine_defaults_to_gptsovits():
     assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
 

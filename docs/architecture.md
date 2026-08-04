@@ -95,8 +95,8 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 - `engine.synth(tts_text)` 的两个 client 接口统一为异步字节流；本地 GPT-SoVITS 发送语言参数，云端 Bailian 发送 profile voice。引擎返回**整段 WAV**。
 - **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。引擎失败能回明确错误(`httpx.HTTPStatusError → 502`;连接失败/其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
 - **音色一致**:每个 Engine Profile 固定自己的参考音或云端 voice；同一 Template 任意 seek 顺序、缓存命中或新生成都使用同一音色。
-- **引擎可切换**(`app.make_engine`,`CONTRACT_TTS_ENGINE` env):默认 `gptsovits`(本地、仅粤语);`CONTRACT_TTS_ENGINE=bailian` 切云端 `cosyvoice-v3-flash`。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、Engine Profile ID 和独立 profile cache version；更改某一 profile 的 voice/model/参数时提升其 `ENGINE_PROFILE_CACHE_VERSION_*`。
-  - 云端 client(`bailian_cosyvoice_client.py`)是两步:POST `SpeechSynthesizer` 拿 JSON 里的 audio url → GET 下载流式字节;`trust_env=False` 绕代理;`DASHSCOPE_API_KEY` 必须设。云端引擎**不需参考音**(用系统音色),音色一致由固定 `voice` 保证。
+- **引擎可切换**(`app.make_engine`,`CONTRACT_TTS_ENGINE` env):默认 `gptsovits`(本地、仅粤语);`CONTRACT_TTS_ENGINE=bailian` 切云端 CosyVoice。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、Engine Profile ID 和独立 profile cache version；更改协议、地域、voice/model/参数时提升受影响的 `ENGINE_PROFILE_CACHE_VERSION_*`。
+  - 云端 client(`bailian_cosyvoice_client.py`)内部有两个 adapter：`BAILIAN_TRANSPORT=http` 时 POST `SpeechSynthesizer` 取得 audio URL 后下载；`BAILIAN_TRANSPORT=wss` 时通过 DashScope SDK 调用 WebSocket TTS，并在线程中执行同步 SDK 以免阻塞事件循环。`DASHSCOPE_API_KEY` 必须设置；端点、模型、音色与 Key 必须属于同一地域。云端引擎**不需参考音**。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构。
 
 ## 6. 文本归一化(关键一层,`normalizer.py` / `normalizers.py`,依赖 `cn2an`)
