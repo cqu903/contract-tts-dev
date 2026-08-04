@@ -72,10 +72,13 @@ ENGINE_URL = os.getenv("GPTSOVITS_ENGINE_URL", "http://127.0.0.1:9880")
 REF_AUDIO_PATH = _project_path_from_env(
     "GPTSOVITS_REF_AUDIO", "refs/cantonese_ref_trim.wav"
 )
+# When GPT-SoVITS runs on another machine, it must receive a path that exists on
+# that machine. Keep the existing local path as the default for same-host setups.
+REF_AUDIO_ENGINE_PATH = os.getenv("GPTSOVITS_REF_AUDIO_ENGINE_PATH", "").strip()
 REF_PROMPT_PATH = _project_path_from_env(
     "GPTSOVITS_REF_PROMPT", "refs/cantonese_ref_trim.txt"
 )
-REF_AUDIO = str(REF_AUDIO_PATH)
+REF_AUDIO = REF_AUDIO_ENGINE_PATH or str(REF_AUDIO_PATH)
 REF_PROMPT = (
     REF_PROMPT_PATH.read_text(encoding="utf-8").strip()
     if REF_PROMPT_PATH.exists()
@@ -120,6 +123,7 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
             api_key=os.getenv("DASHSCOPE_API_KEY", ""),
             model=BAILIAN_MODEL,
             voice=settings["voice"],
+            text_lang=settings["text_lang"],
             transport_mode=BAILIAN_TRANSPORT,
             http_base_url=BAILIAN_HTTP_BASE_URL,
             ws_url=BAILIAN_WS_URL,
@@ -198,6 +202,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Cantonese Contract TTS Service", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def disable_frontend_cache(request, call_next):
+    """Always serve current demo assets; API responses retain normal caching."""
+    if not request.url.path.startswith("/api/"):
+        request.scope["headers"] = [
+            (name, value)
+            for name, value in request.scope["headers"]
+            if name.lower() not in {b"if-none-match", b"if-modified-since"}
+        ]
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # per-key 生成锁：并发的相同请求只合成一次
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -253,7 +275,16 @@ def _engine_for(profile: TemplateProfile):
     return profile.engine_profile.engine_provider()
 
 
-async def _synth_and_cache(key: str, tts_text: str, selected_engine) -> bytes:
+def _prepare_engine_text(selected_engine, text: str) -> str:
+    prepare_text = getattr(selected_engine, "prepare_text", None)
+    return prepare_text(text) if callable(prepare_text) else text
+
+
+async def _synth_and_cache(
+    key: str,
+    engine_input_text: str,
+    selected_engine,
+) -> bytes:
     """合成音频并写入缓存，返回字节。命中缓存则直接读回；未命中则在 per-key 锁内
     合成（并发的相同请求只合成一次）。"""
     cached = cache.get(key)
@@ -264,7 +295,7 @@ async def _synth_and_cache(key: str, tts_text: str, selected_engine) -> bytes:
         if cached_again is not None:
             return cached_again.read_bytes()
         buf = bytearray()
-        async for chunk in selected_engine.synth(tts_text):
+        async for chunk in selected_engine.synth(engine_input_text):
             buf.extend(chunk)
         data = bytes(buf)
         cache.put(key, data)
@@ -287,9 +318,12 @@ async def _warm_segment(contract_id: str, seg_idx: int) -> None:
     """后台把某段音频合成入缓存（上传时用于预热 seg 0）。"""
     try:
         idx, profile = _load_idx_or_404(contract_id, seg_idx)
-        tts_text = profile.normalizer(idx.segments[seg_idx].text)
+        input_text = idx.segments[seg_idx].text
+        normalized_text = profile.normalizer(input_text)
+        selected_engine = _engine_for(profile)
+        tts_text = _prepare_engine_text(selected_engine, normalized_text)
         key = _cache_identity(profile, tts_text)
-        await _synth_and_cache(key, tts_text, _engine_for(profile))
+        await _synth_and_cache(key, normalized_text, selected_engine)
     except Exception as e:
         print(f"[warm seg {seg_idx}] failed: {e}", flush=True)
 
@@ -309,7 +343,9 @@ def upload_contract(body: ContractUpload, background_tasks: BackgroundTasks):
     )
     # 预热 seg 0，让首次播放即点即响（前端上传后立即加载 seg 0）
     background_tasks.add_task(_warm_segment, cid, 0)
-    return _index_response(idx)
+    response = _index_response(idx)
+    response["template_id"] = profile.id
+    return response
 
 
 @app.get("/api/contracts/{contract_id}")
@@ -321,11 +357,14 @@ def get_contract(contract_id: str):
 @app.get("/api/contracts/{contract_id}/segments/{seg_idx}")
 async def get_segment(contract_id: str, seg_idx: int):
     idx, profile = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = profile.normalizer(idx.segments[seg_idx].text)
+    input_text = idx.segments[seg_idx].text
+    normalized_text = profile.normalizer(input_text)
+    selected_engine = _engine_for(profile)
+    tts_text = _prepare_engine_text(selected_engine, normalized_text)
     key = _cache_identity(profile, tts_text)
     # 整段合成完再返回：引擎失败时能回明确的 502/500，而不是被浏览器吞成空 200（"Load failed"）。
     try:
-        data = await _synth_and_cache(key, tts_text, _engine_for(profile))
+        data = await _synth_and_cache(key, normalized_text, selected_engine)
         return Response(data, media_type="audio/wav")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
@@ -338,14 +377,17 @@ async def get_segment(contract_id: str, seg_idx: int):
 @app.post("/api/contracts/{contract_id}/segments/{seg_idx}/preload")
 async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTasks):
     idx, profile = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = profile.normalizer(idx.segments[seg_idx].text)
+    input_text = idx.segments[seg_idx].text
+    normalized_text = profile.normalizer(input_text)
+    selected_engine = _engine_for(profile)
+    tts_text = _prepare_engine_text(selected_engine, normalized_text)
     key = _cache_identity(profile, tts_text)
     if cache.has(key):
         return {"status": "cached", "seg_idx": seg_idx}
 
     async def _bg():
         try:
-            await _synth_and_cache(key, tts_text, _engine_for(profile))
+            await _synth_and_cache(key, normalized_text, selected_engine)
         except Exception as e:
             print(f"[preload seg {seg_idx}] failed: {e}", flush=True)
 

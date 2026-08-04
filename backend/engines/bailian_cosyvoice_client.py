@@ -3,7 +3,9 @@
 Both transports implement the same ``synth(text) -> AsyncIterator[bytes]``
 interface. HTTP uses the legacy SpeechSynthesizer endpoint and downloads the
 returned audio URL. WSS uses DashScope's CosyVoice SDK, which is required by
-the Singapore region. Text normalization remains in the application module.
+the Singapore region. General contract normalization remains in the
+application layer; engine-specific Mandarin script conversion happens here at
+the final TTS boundary.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import AsyncIterator, Literal
 import dashscope
 import httpx
 from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
+from opencc import OpenCC
 
 
 BailianTransport = Literal["http", "wss"]
@@ -29,6 +32,7 @@ class BailianCosyVoiceClient:
         api_key: str,
         model: str = "cosyvoice-v3-flash",
         voice: str = "longjiaxin_v3",
+        text_lang: str | None = None,
         transport_mode: BailianTransport = "http",
         http_base_url: str = "https://dashscope.aliyuncs.com",
         ws_url: str = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference",
@@ -41,10 +45,14 @@ class BailianCosyVoiceClient:
             raise ValueError("BAILIAN_TRANSPORT must be 'http' or 'wss'")
         if transport_mode == "wss" and not ws_url.startswith("wss://"):
             raise ValueError("BAILIAN_WS_URL must start with wss://")
+        if text_lang not in {None, "zh", "yue", "en"}:
+            raise ValueError("text_lang must be one of: zh, yue, en")
 
         self.api_key = api_key
         self.model = model
         self.voice = voice
+        self.text_lang = text_lang
+        self._traditional_to_simplified = OpenCC("t2s") if text_lang == "zh" else None
         self.transport_mode = transport_mode
         self.http_base_url = http_base_url.rstrip("/")
         self.ws_url = ws_url
@@ -53,9 +61,16 @@ class BailianCosyVoiceClient:
         self.sample_rate = sample_rate
         self.timeout = timeout
 
+    def prepare_text(self, text: str) -> str:
+        """Apply language-specific conversion immediately before TTS."""
+        if self._traditional_to_simplified is None:
+            return text
+        return self._traditional_to_simplified.convert(text)
+
     async def synth(
         self, text: str, transport: httpx.AsyncBaseTransport | None = None
     ) -> AsyncIterator[bytes]:
+        text = self.prepare_text(text)
         if self.transport_mode == "wss":
             audio = await asyncio.to_thread(self._synth_wss, text)
             yield audio

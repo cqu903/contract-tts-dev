@@ -14,9 +14,11 @@ from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 class FakeEngine:
     def __init__(self):
         self.calls = 0
+        self.texts = []
 
     async def synth(self, text, transport=None):
         self.calls += 1
+        self.texts.append(text)
         yield f"audio:{text}".encode()
 
 
@@ -63,6 +65,38 @@ def test_unknown_template_id_returns_400(tmp_path, monkeypatch):
     client = TestClient(appmod.app)
     r = client.post("/api/contracts", json={"text": "x", "template_id": "bogus"})
     assert r.status_code == 400
+
+
+def test_upload_echoes_canonical_template_id(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    response = client.post(
+        "/api/contracts",
+        json={"text": "普通话合同。", "template_id": "xcash_yue"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["template_id"] == "xcash_yue"
+
+
+def test_frontend_assets_disable_conditional_browser_cache():
+    client = TestClient(appmod.app)
+
+    first = client.get("/app.js")
+    second = client.get(
+        "/app.js",
+        headers={
+            "If-None-Match": first.headers.get("etag", '"stale"'),
+            "If-Modified-Since": first.headers.get(
+                "last-modified", "Wed, 21 Oct 2015 07:28:00 GMT"
+            ),
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.headers["cache-control"] == "no-store, no-cache, must-revalidate"
 
 
 def test_xcash_alias_and_canonical_template_share_new_contract_id(tmp_path, monkeypatch):

@@ -102,7 +102,7 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 ## 6. 文本归一化(关键一层,`normalizer.py` / `normalizers.py`,依赖 `cn2an`)
 
 Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_yue` 规则；
-`xcash_zh` 使用普通话数字、日期、金额、时间和编号读法且不做繁简转换；
+`xcash_zh` 的 normalizer 保持原有职责，只处理普通话数字、日期、金额、时间和编号读法；繁体转简体由普通话百炼 TTS 引擎适配层在远程请求前最后一步完成，不改动上传原文和页面显示文本；
 `xcash_en` 保留英文词汇和专有名词，并展开日期、金额、百分比、单位及逐位编号。
 
 显示文本保持原始(给客户看);只改喂给 TTS 的文本。核心是**按语言分流**:

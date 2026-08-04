@@ -41,6 +41,42 @@ def test_synth_posts_to_cosyvoice_then_streams_downloaded_bytes():
     assert captured["auth"] == "Bearer sk-test"
 
 
+def test_mandarin_engine_converts_traditional_text_at_request_boundary():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(200, json={"output": {"audio": {"url": OSS_URL}}})
+        return httpx.Response(200, content=b"AUDIOBYTES")
+
+    client = BailianCosyVoiceClient(
+        api_key="sk-test", voice="mandarin-voice", text_lang="zh"
+    )
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in client.synth(
+                "本貸款協議於香港簽訂。", transport=httpx.MockTransport(handler)
+            )
+        ]
+
+    assert b"".join(asyncio.run(collect())) == b"AUDIOBYTES"
+    assert captured["payload"]["input"]["text"] == "本贷款协议于香港签订。"
+
+
+def test_non_mandarin_engine_preserves_traditional_text():
+    source = "本貸款協議於香港簽訂。"
+
+    assert BailianCosyVoiceClient(
+        api_key="sk-test", text_lang="yue"
+    ).prepare_text(source) == source
+    assert BailianCosyVoiceClient(
+        api_key="sk-test", text_lang="en"
+    ).prepare_text(source) == source
+
+
 def test_synth_raises_http_status_error_on_engine_failure():
     """Non-2xx from cosyvoice -> httpx.HTTPStatusError (app.py maps this to 502)."""
     def handler(request: httpx.Request) -> httpx.Response:

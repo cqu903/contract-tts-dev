@@ -63,7 +63,7 @@ def test_profiles_have_independently_configurable_cache_versions():
 def test_mandarin_normalizer_preserves_traditional_text_and_normalizes_numbers():
     out = normalize_for_tts_zh("貸款金額 1,250 元，日期 2026年8月3日，編號 123456。")
 
-    assert "貸款" in out
+    assert "貸款金額" in out
     assert "一千二百五十" in out
     assert "二零二六年八月三日" in out
     assert "一二三四五六" in out
@@ -185,6 +185,8 @@ def test_mandarin_api_uses_its_profile_and_isolated_contract_id(tmp_path, monkey
     assert appmod.CONTRACT_STORE.get(zh.json()["contract_id"]) == source
     assert yue_engine.calls == 1
     assert zh_engine.calls == 1
+    assert "繁體合同" in yue_engine.texts[0]
+    assert "繁體合同" in zh_engine.texts[0]
 
 
 def test_english_api_uses_its_profile_and_isolated_contract_id(tmp_path, monkeypatch):
@@ -233,5 +235,7 @@ def test_make_engine_selects_language_specific_cloud_and_local_settings(monkeypa
     assert isinstance(en_cloud, BailianCosyVoiceClient)
     assert zh_cloud.voice == appmod.BAILIAN_VOICE_ZH
     assert en_cloud.voice == appmod.BAILIAN_VOICE_EN
+    assert zh_cloud.text_lang == "zh"
+    assert en_cloud.text_lang == "en"
     assert isinstance(zh_local, GPTSoVITSClient)
     assert zh_local.text_lang == zh_local.prompt_lang == "zh"

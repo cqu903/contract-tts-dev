@@ -10,7 +10,7 @@ from .cn_numbers import digits_to_cn, number_to_cn
 
 
 def normalize_for_tts_zh(text: str) -> str:
-    """Normalize Mandarin reading cues while preserving the original script."""
+    """Normalize Mandarin reading cues without changing the input script."""
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text or "")
     text = re.sub(r"(?:HK\$|HKD)\s*", "港币", text, flags=re.IGNORECASE)
 

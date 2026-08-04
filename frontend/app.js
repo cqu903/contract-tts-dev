@@ -93,6 +93,11 @@ uploadBtn.addEventListener("click", async () => {
       throw new Error(detail);
     }
     const data = await r.json();
+    if (data.template_id && data.template_id !== templateId) {
+      throw new Error(
+        `模板不一致：前端=${templateId}，後端=${data.template_id}`
+      );
+    }
     contractId = data.contract_id;
     segs = data.segments;
     totalEst = data.total_est_s;

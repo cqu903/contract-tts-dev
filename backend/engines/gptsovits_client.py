@@ -31,6 +31,11 @@ class GPTSoVITSClient:
         # trust_env=False: do NOT route localhost through HTTP_PROXY (e.g. clash on :7897) -> 502
         async with httpx.AsyncClient(timeout=self.timeout, transport=transport, trust_env=False) as client:
             async with client.stream("POST", f"{self.base_url}/tts", json=payload) as r:
+                # Streaming responses are not buffered automatically. Read an error body
+                # before raising so callers can report GPT-SoVITS' actual validation or
+                # inference error instead of masking it with httpx.ResponseNotRead.
+                if r.is_error:
+                    await r.aread()
                 r.raise_for_status()
                 async for chunk in r.aiter_bytes():
                     yield chunk
