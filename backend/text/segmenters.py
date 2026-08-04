@@ -8,6 +8,12 @@ from .segmenter import Segment
 
 _EN_SENTENCE_END = re.compile(r"(?<=[.!?;])(?:\s+|$)")
 _EN_WORD = re.compile(r"\S+")
+_EN_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_EN_MARKER_ONLY = re.compile(
+    r"^(?:[（(](?:[A-Za-z]+|\d+(?:\.\d+)*)[）)]|"
+    r"(?:\d+(?:\.\d+)*|[A-Za-z])[.)．])$"
+)
+_EN_PUNCTUATION_ONLY = re.compile(r"^[,.;:!?\-–—)\]）】]+$")
 
 
 def _english_sentences(line: str) -> list[str]:
@@ -46,6 +52,36 @@ def _pack_english_pieces(pieces: list[str], target: int, soft_max: int) -> list[
     return out
 
 
+def _repair_english_fragments(segments: list[Segment]) -> list[Segment]:
+    """Attach extracted list labels and stray punctuation to readable text."""
+    repaired: list[str] = []
+    pending: list[str] = []
+    for segment in segments:
+        text = segment.text.strip()
+        if not text:
+            continue
+        if _EN_MARKER_ONLY.fullmatch(text):
+            pending.append(text)
+            continue
+        if _EN_PUNCTUATION_ONLY.fullmatch(text):
+            if repaired:
+                repaired[-1] += text
+            else:
+                pending.append(text)
+            continue
+        if pending:
+            text = " ".join([*pending, text])
+            pending.clear()
+        repaired.append(text)
+
+    if pending:
+        if repaired:
+            repaired[-1] += " " + " ".join(pending)
+        else:
+            repaired.append(" ".join(pending))
+    return [Segment(text) for text in repaired]
+
+
 def split_contract_en(text: str, *, target: int = 80, soft_max: int = 105,
                       hard_max: int = 120) -> list[Segment]:
     """Split English on sentence boundaries and never in the middle of a word."""
@@ -54,7 +90,8 @@ def split_contract_en(text: str, *, target: int = 80, soft_max: int = 105,
     soft_max = min(soft_max, hard_max)
     target = min(target, soft_max)
     segments: list[Segment] = []
-    for raw_line in (text or "").strip().splitlines():
+    cleaned = _EN_CONTROL_CHARS.sub("", text or "")
+    for raw_line in cleaned.strip().splitlines():
         line = raw_line.strip()
         if not line:
             continue
@@ -67,7 +104,7 @@ def split_contract_en(text: str, *, target: int = 80, soft_max: int = 105,
         segments.extend(
             Segment(piece) for piece in _pack_english_pieces(pieces, target, soft_max)
         )
-    return segments
+    return _repair_english_fragments(segments)
 
 
 def estimate_duration_en(text: str, rate: float = 2.6) -> float:

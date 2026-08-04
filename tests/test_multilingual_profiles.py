@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as appmod
@@ -67,6 +68,44 @@ def test_mandarin_normalizer_preserves_traditional_text_and_normalizes_numbers()
     assert "一千二百五十" in out
     assert "二零二六年八月三日" in out
     assert "一二三四五六" in out
+
+
+def test_mandarin_normalizer_keeps_english_address_as_spoken_words():
+    source = (
+        "FLT 6 15/F BLK 5 CHEONG YAT HOUSE 3 CHEONG SAN LANE "
+        "SHAM SHUI PO KOWLOON"
+    )
+
+    assert normalize_for_tts_zh(source) == (
+        "Flat 6 15th Floor Block 5 Cheong Yat House 3 Cheong San Lane "
+        "Sham Shui Po Kowloon"
+    )
+
+
+def test_mandarin_english_address_rules_generalize_and_preserve_chinese_values():
+    assert normalize_for_tts_zh(
+        "RM 8 21/F BLK 2 HARBOUR VIEW TWR 9 QUEEN'S RD CENTRAL"
+    ) == (
+        "Room 8 21st Floor Block 2 Harbour View Tower 9 Queen's Road Central"
+    )
+    assert normalize_for_tts_zh("HKD 5,000") == "港币五千"
+    assert normalize_for_tts_zh("AB-1234") == "AB-一二三四"
+
+
+def test_mandarin_address_remains_english_after_long_line_segmentation():
+    source = (
+        "FLT 6 15/F BLK 5 CHEONG YAT HOUSE 3 CHEONG SAN LANE "
+        "SHAM SHUI PO KOWLOON"
+    )
+
+    spoken = " ".join(
+        normalize_for_tts_zh(segment.text) for segment in split_contract_zh(source)
+    )
+
+    assert spoken == (
+        "Flat 6 15th Floor Block 5 Cheong Yat House 3 Cheong San Lane "
+        "Sham Shui Po Kowloon"
+    )
 
 
 def test_mandarin_segmenter_is_independent_and_has_its_own_duration_rate():
@@ -142,6 +181,26 @@ def test_english_segmenter_honors_target_soft_max_and_newline_boundaries():
     assert all(len(segment.text) <= 40 for segment in segments)
 
 
+def test_english_segmenter_attaches_standalone_list_markers_to_their_text():
+    segments = split_contract_en(
+        "(a)\nBorrower shall pay.\n(ii)\nPayment is due."
+    )
+
+    assert [segment.text for segment in segments] == [
+        "(a) Borrower shall pay.",
+        "(ii) Payment is due.",
+    ]
+
+
+def test_mandarin_segmenter_attaches_standalone_list_markers_to_their_text():
+    segments = split_contract_zh("（ii）\n借款人应付款。\n(A)\n其他条款。")
+
+    assert [segment.text for segment in segments] == [
+        "（ii）借款人应付款。",
+        "(A)其他条款。",
+    ]
+
+
 def test_english_normalizer_reads_dates_amounts_and_identifiers():
     out = normalize_for_tts_en("Pay $1,250 by 2026-08-03. Account AB-1234 is 5.25%.")
 
@@ -149,6 +208,100 @@ def test_english_normalizer_reads_dates_amounts_and_identifiers():
     assert "August third, two thousand twenty six" in out
     assert "five point two five percent" in out
     assert "A B one two three four" in out
+
+
+def test_english_profile_reads_day_month_year_date_before_slash_identifiers():
+    source = "The agreement date is 30/07/2026."
+
+    segments = split_contract_en(source)
+    spoken = " ".join(normalize_for_tts_en(segment.text) for segment in segments)
+
+    assert [segment.text for segment in segments] == [source]
+    assert spoken == "The agreement date is July thirtieth, two thousand twenty six."
+    assert normalize_for_tts_en("Reference 0954/2024.") == (
+        "Reference zero nine five four two zero two four."
+    )
+
+
+def test_english_normalizer_expands_address_words_instead_of_spelling_letters():
+    source = "Address:FLT 410 21/F WANG FOOK COURT 76981363 KOWLOON CITY KOWLOON"
+
+    assert normalize_for_tts_en(source) == (
+        "Address:Flat four hundred ten twenty first floor Wang Fook Court "
+        "seven six nine eight one three six three Kowloon City Kowloon"
+    )
+    assert "Queen's Road" in normalize_for_tts_en(
+        "ROOM 2110-11, 21/F, COSCO TOWER, 183 QUEEN'S RD CENTRAL"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("Due 30 July 2026.", "Due July thirtieth, two thousand twenty six."),
+        ("Due 30th July 2026.", "Due July thirtieth, two thousand twenty six."),
+        ("Due July 30, 2026.", "Due July thirtieth, two thousand twenty six."),
+        ("Due 30-07-2026.", "Due July thirtieth, two thousand twenty six."),
+        ("Due 1/1/2027.", "Due January first, two thousand twenty seven."),
+        (
+            "Due 29/02/2028.",
+            "Due February twenty ninth, two thousand twenty eight.",
+        ),
+        ("At 10:00.", "At ten o'clock."),
+        ("At 9:05.", "At nine oh five."),
+        ("At 23:31.", "At twenty three thirty one."),
+        (
+            "Pay HK$1,250.00.",
+            "Pay one thousand two hundred fifty Hong Kong dollars.",
+        ),
+        (
+            "Pay HKD 1.50.",
+            "Pay one Hong Kong dollar and fifty cents.",
+        ),
+        (
+            "Rate HK$1.234.",
+            "Rate one point two three four Hong Kong dollars.",
+        ),
+        ("Pay $2.05.", "Pay two dollars and five cents."),
+        ("Office 39/F.", "Office thirty ninth floor."),
+        ("(a) Borrower", "item A, Borrower"),
+        ("(ii) Payment", "item I I, Payment"),
+        (
+            "Terms: (a) first; (ii) second",
+            "Terms: item A, first; item I I, second",
+        ),
+        ("The account(s) remain open.", "The account(s) remain open."),
+    ],
+)
+def test_english_normalizer_handles_general_contract_formats(source, expected):
+    assert normalize_for_tts_en(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("$5,000", "港币五千"),
+        ("港幣$5,000.00", "港币五千"),
+        ("地址39/F", "地址三十九楼"),
+        ("第III部", "第三部"),
+        ("（ii）付款", "第I I项，付款"),
+        ("包括：（a）甲；（ii）乙", "包括：第A项，甲；第I I项，乙"),
+        ("2026-07-30", "二零二六年七月三十日"),
+        ("30-07-2026", "二零二六年七月三十日"),
+        ("1/1/2027", "二零二七年一月一日"),
+        ("29/02/2028", "二零二八年二月二十九日"),
+    ],
+)
+def test_mandarin_normalizer_handles_general_contract_formats(source, expected):
+    assert normalize_for_tts_zh(source) == expected
+
+
+def test_invalid_numeric_date_is_not_rendered_as_a_mandarin_date():
+    assert "年" not in normalize_for_tts_zh("31-02-2026")
+
+
+def test_invalid_numeric_date_is_not_rendered_as_an_english_date():
+    assert "February" not in normalize_for_tts_en("31/02/2026")
 
 
 def test_language_normalizers_read_identifiers_and_units_without_rewriting_source():
@@ -165,6 +318,18 @@ def test_language_normalizers_read_identifiers_and_units_without_rewriting_sourc
     assert "A one B two C three" in en
     assert "five kilograms" in en
     assert "one pound" in en
+
+
+def test_identity_card_check_digit_is_not_misread_as_a_list_item():
+    zh = normalize_for_tts_zh("香港身份證號碼：Z657587(1) 地址")
+    en = normalize_for_tts_en("Hong Kong Identity Card No. M698604(3)")
+
+    assert zh == "香港身份證號碼：Z六五七五八七一 地址"
+    assert en == (
+        "Hong Kong Identity Card No. M six nine eight six zero four three"
+    )
+    assert "第" not in zh
+    assert "item" not in en.lower()
 
 
 def test_mandarin_api_uses_its_profile_and_isolated_contract_id(tmp_path, monkeypatch):

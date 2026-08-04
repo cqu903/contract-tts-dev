@@ -67,6 +67,19 @@ def test_unknown_template_id_returns_400(tmp_path, monkeypatch):
     assert r.status_code == 400
 
 
+def test_upload_rejects_control_only_contract_text(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    response = client.post(
+        "/api/contracts",
+        json={"text": "\x00\x01\x02", "template_id": "xcash_yue"},
+    )
+
+    assert response.status_code == 400
+    assert list((tmp_path / "uploaded").glob("*.txt")) == []
+
+
 def test_upload_echoes_canonical_template_id(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     client = TestClient(appmod.app)

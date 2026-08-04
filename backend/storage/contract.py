@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,11 +40,24 @@ class SegmentIndex:
 
 def build_index(contract_id: str, text: str, *,
                 splitter=split_contract,
-                duration_estimator=estimate_duration) -> SegmentIndex:
+                duration_estimator=estimate_duration,
+                duration_text_transform: Callable[[str], str] | None = None,
+                ) -> SegmentIndex:
+    """Build a seek index while keeping raw Segment text private to the server.
+
+    ``duration_text_transform`` lets a Template estimate the text that will
+    actually be spoken after language conversion, avoiding large drift when a
+    compact amount, date, or identifier expands into many spoken words.
+    """
     metas: list[SegmentMeta] = []
     t = 0.0
     for i, seg in enumerate(splitter(text)):
-        dur = duration_estimator(seg.text)
+        duration_text = (
+            duration_text_transform(seg.text)
+            if duration_text_transform is not None
+            else seg.text
+        )
+        dur = duration_estimator(duration_text)
         metas.append(SegmentMeta(i, seg.text, dur, t))
         t += dur
     return SegmentIndex(contract_id, metas, round(t, 3))

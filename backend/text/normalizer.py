@@ -30,18 +30,12 @@ from cn2an import an2cn
 
 from .cn_numbers import digits_to_cn as _digits_to_cn
 from .cn_numbers import number_to_cn as _num_to_cn
+from .english_runs import normalize_english_run
 
 _PUA_BASE = 0xE000  # Private Use Area start; placeholders for stashed English runs
 
 
 # --- L2: English-run cleanup (for the engine's auto_yue English frontend) ---
-
-# Structural abbreviations the English g2p would letter-spell -> expand to words.
-# Keys are 3 letters so they never collide with the full words they map to.
-_L2_ABBREV = {
-    "flt": "Flat",
-    "blk": "Block",
-}
 
 _ROMAN_TO_CN = {"i": "一", "ii": "二", "iii": "三", "iv": "四", "v": "五",
                 "vi": "六", "vii": "七", "viii": "八", "ix": "九", "x": "十",
@@ -53,27 +47,6 @@ _ROMAN_TO_CN = {"i": "一", "ii": "二", "iii": "三", "iv": "四", "v": "五",
 # waan4 words for homophones. haan4 words (還是/還有) are deliberately absent.
 _WAAN4_HOMOPHONES = {"償還": "償環", "清還": "清環", "退還": "退環",
                      "歸還": "歸環", "還款": "環款"}
-
-
-def _ordinal(n: int) -> str:
-    """1->1st, 2->2nd, 3->3rd, 4->4th, 11->11th, 12->12th, 39->39th."""
-    if 10 <= n % 100 <= 20:
-        suf = "th"
-    else:
-        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suf}"
-
-
-def _l2_english(text: str) -> str:
-    """Clean an English run for auto_yue: expand structural abbreviations,
-    39/F -> Nth Floor, and title-case ALL-CAPS words. Digits are left intact
-    (read in English, not converted to Chinese)."""
-    for ab, full in _L2_ABBREV.items():
-        text = re.sub(r"\b" + ab + r"\b", full, text, flags=re.IGNORECASE)
-    text = re.sub(r"(\d+)\s*/?\s*[Ff](?![A-Za-z])",
-                  lambda m: _ordinal(int(m.group(1))) + " Floor", text)
-    text = re.sub(r"\b[A-Z]{2,}\b", lambda m: m.group(0).capitalize(), text)
-    return text
 
 
 def _roman_repl(m: re.Match) -> str:
@@ -160,7 +133,7 @@ def normalize_for_tts(text: str) -> str:
     def _maybe_stash(m: re.Match) -> str:
         chunk = m.group(0)
         if re.search(r'[A-Za-z]{3,}', chunk):
-            stash.append(_l2_english(chunk))
+            stash.append(normalize_english_run(chunk))
             return chr(_PUA_BASE + len(stash) - 1)
         return chunk
 

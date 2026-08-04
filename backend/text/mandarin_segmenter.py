@@ -20,8 +20,13 @@ _CLAUSE_END = "，、："
 _LEFT_BOUNDARY = "，、：；。！？）】》」』)"
 _RIGHT_BOUNDARY = "（【《「『("
 _ASCII_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/@+-]*")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _PUNCTUATION_ONLY = re.compile(r"^[，、：；。！？）】》」』)］]+$")
 _NUMBER_HEADING = re.compile(r"^(?:\d+|[A-Za-z])[.．]$")
+_STRUCTURE_MARKER = re.compile(
+    r"^(?:[（(](?:[A-Za-z]+|\d+(?:\.\d+)*)[）)]|"
+    r"(?:\d+(?:\.\d+)*|[A-Za-z])[.)．、])$"
+)
 _FORWARD_CONNECTORS = {"和", "及", "或", "以及"}
 
 
@@ -102,6 +107,7 @@ def _is_forward_fragment(text: str) -> bool:
     return (
         text in _FORWARD_CONNECTORS
         or bool(_NUMBER_HEADING.fullmatch(text))
+        or bool(_STRUCTURE_MARKER.fullmatch(text))
         or (len(text) <= 8 and text.endswith(("：", ":")))
     )
 
@@ -160,7 +166,8 @@ def split_contract_zh(text: str, *, target: int = TARGET, soft_max: int = SOFT_M
     target = min(target, soft_max)
 
     segments: list[Segment] = []
-    for raw_line in (text or "").strip().splitlines():
+    cleaned = _CONTROL_CHARS.sub("", text or "")
+    for raw_line in cleaned.strip().splitlines():
         line = raw_line.strip()
         if not line:
             continue

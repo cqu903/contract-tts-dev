@@ -143,6 +143,11 @@ class ContractUpload(BaseModel):
     template_id: str
 
 
+def _has_readable_contract_text(text: str) -> bool:
+    """Reject whitespace/control-only bodies without constraining real names or values."""
+    return any(char.isprintable() and not char.isspace() for char in text)
+
+
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
 engine = make_engine()
@@ -255,6 +260,7 @@ def _load_idx_or_404(contract_id: str, seg_idx: int | None = None) -> tuple[Segm
         text,
         splitter=profile.splitter,
         duration_estimator=profile.duration_estimator,
+        duration_text_transform=profile.normalizer,
     )
     if seg_idx is not None and (seg_idx < 0 or seg_idx >= len(idx.segments)):
         raise HTTPException(status_code=404, detail="seg_idx out of range")
@@ -331,16 +337,19 @@ async def _warm_segment(contract_id: str, seg_idx: int) -> None:
 @app.post("/api/contracts")
 def upload_contract(body: ContractUpload, background_tasks: BackgroundTasks):
     profile = _profile_for_input(body.template_id)
-    if not body.text.strip():
+    if not _has_readable_contract_text(body.text):
         raise HTTPException(status_code=400, detail="text is empty")
     cid = compute_contract_id(body.text, profile.id)
-    CONTRACT_STORE.put(cid, body.text, template_id=profile.id)
     idx = build_index(
         cid,
         body.text,
         splitter=profile.splitter,
         duration_estimator=profile.duration_estimator,
+        duration_text_transform=profile.normalizer,
     )
+    if not idx.segments:
+        raise HTTPException(status_code=400, detail="text has no readable segments")
+    CONTRACT_STORE.put(cid, body.text, template_id=profile.id)
     # 预热 seg 0，让首次播放即点即响（前端上传后立即加载 seg 0）
     background_tasks.add_task(_warm_segment, cid, 0)
     response = _index_response(idx)

@@ -73,7 +73,7 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 ## 3. seek 逻辑(`contract.py` / `segmenter.py` / 前端 `app.js`)
 
 1. **分句**(`segmenter.split_contract(text, target=20, soft_max=45, hard_max=50)`):硬边界为句末标点 `。！？；` 与换行;行内长句先按 `，、;` 子切,仍超 `hard_max` 再按 `：（《(` 拆;短碎片向 `target` 合并、封顶 `soft_max`;≤1 字的孤碎片折回前段。**确定性**——同文本永远同分段(缓存键稳定的前提)。
-2. **段索引**(`contract.build_index(contract_id, text)`):每段 `{seg_idx, text, est_dur_s, cumulative_start_s}`,总和 `total_est_s`。`est_dur_s` 按字数 ÷ 3.7 字/秒估算。
+2. **段索引**(`contract.build_index(contract_id, text)`):每段 `{seg_idx, text, est_dur_s, cumulative_start_s}`,总和 `total_est_s`。`est_dur_s` 按 Template 转换后的实际朗读文本估算（英语按词数，普通话/粤语按非空白字符），避免金额、日期和编号展开后进度条持续漂移。
 3. **进度条**:前端把一个 `range(0..1000)` 映射到 `[0, total_est_s]`,**音频还没生成就能拖**(连续流式给不了的可拖动时间轴)。
 4. **位置→段**(`contract.position_to_segment(idx, t)` / 前端 `segmentAtSeconds`):找 `cumulative_start_s ≤ t < 下一段`。**seek 吸附段边界**——拖到一段中间也从该段头播(段很短 ~5–13s,合同场景可接受;省掉子段精确 seek)。
 5. **预载**:播放某段时,后台 `POST /api/contracts/{id}/segments/{n}/preload` 预热后面 K=3 段,让顺序播放/小幅前 seek 命中缓存;上传时预热 seg 0。
@@ -102,8 +102,8 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 ## 6. 文本归一化(关键一层,`normalizer.py` / `normalizers.py`,依赖 `cn2an`)
 
 Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_yue` 规则；
-`xcash_zh` 的 normalizer 保持原有职责，只处理普通话数字、日期、金额、时间和编号读法；繁体转简体由普通话百炼 TTS 引擎适配层在远程请求前最后一步完成，不改动上传原文和页面显示文本；
-`xcash_en` 保留英文词汇和专有名词，并展开日期、金额、百分比、单位及逐位编号。
+`xcash_zh` 的 normalizer 按语义处理经过真实日期/时间校验的多格式日期、币种金额、百分比、楼层、结构标记和逐位编号；连续英文姓名、公司名和地址会先受保护并做英文 L2 清洗（如 `FLT→Flat`、`15/F→15th Floor`、全大写地名转词形），避免普通话数字规则改写地址或 TTS 逐字母拼读。繁体转简体由普通话百炼 TTS 引擎适配层在远程请求前最后一步完成，不改动上传原文和页面显示文本；
+`xcash_en` 保留英文词汇和专有名词，复用上述地址缩写与大小写清洗，并展开 ISO/港式/英文月份日期、24 小时时间、金额与分币、百分比、单位、楼层、结构标记及逐位编号。英普切分器会把 PDF/Word 提取后独占一行的 `(a)`、`(ii)` 等标记与下一段正文合并，避免生成无意义的短音频。
 
 显示文本保持原始(给客户看);只改喂给 TTS 的文本。核心是**按语言分流**:
 
