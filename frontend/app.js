@@ -6,11 +6,26 @@ const audio = document.getElementById("audio");
 const clauseEl = document.getElementById("clause");
 const textInput = document.getElementById("text");
 const uploadBtn = document.getElementById("upload");
+const templateInput = document.getElementById("template");
+const templateHint = document.getElementById("templateHint");
+
+const TEMPLATE_HINTS = {
+  xcash_yue: "中文合同，朗讀為粵語；使用粵語切分和文字處理。",
+  xcash_zh: "中文合同，朗讀為普通話；使用普通話切分和文字處理。",
+  xcash_en: "英文合同，朗讀為 English；使用英語切分和文字處理。",
+};
 
 let contractId = null;
 let segs = [];        // [{seg_idx, est_dur_s, cumulative_start_s}]
 let totalEst = 0;
 let current = 0;
+
+function updateTemplateHint() {
+  templateHint.textContent = TEMPLATE_HINTS[templateInput.value];
+}
+
+templateInput.addEventListener("change", updateTemplateHint);
+updateTemplateHint();
 
 function barToSeconds(v) {
   return (Number(v) / 1000) * totalEst;
@@ -63,15 +78,20 @@ bar.addEventListener("change", () => {
 uploadBtn.addEventListener("click", async () => {
   const text = textInput.value.trim();
   if (!text) { statusEl.textContent = "請貼上合同文字"; return; }
+  const templateId = templateInput.value;
   uploadBtn.disabled = true;
-  statusEl.textContent = "上傳切片中…";
+  statusEl.textContent = templateId + " 上傳切片中…";
   try {
     const r = await fetch("/api/contracts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, template_id: "xcash" }),
+      body: JSON.stringify({ text, template_id: templateId }),
     });
-    if (!r.ok) throw new Error(`upload failed: ${r.status}`);
+    if (!r.ok) {
+      let detail = "HTTP " + r.status;
+      try { detail = (await r.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
     const data = await r.json();
     contractId = data.contract_id;
     segs = data.segments;
@@ -84,7 +104,8 @@ uploadBtn.addEventListener("click", async () => {
       audio.src = URL.createObjectURL(blob);
       clauseEl.textContent = `第 1/${segs.length} 段`;
       bar.value = 0;
-      statusEl.textContent = `就緒 · 共 ${segs.length} 段 · 預估 ${totalEst.toFixed(0)}s(已預載第 1 段,按播放即可)`;
+      statusEl.textContent = templateId + " · 就緒 · 共 " + segs.length
+        + " 段 · 預估 " + totalEst.toFixed(0) + "s(已預載第 1 段,按播放即可)";
     } catch (e) {
       statusEl.textContent = `就緒 · 預載第 1 段失敗:${e.message}(可拖動進度條開始)`;
     }
