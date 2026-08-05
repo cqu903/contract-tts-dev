@@ -86,7 +86,7 @@ uv run python scripts/debug_bailian_singapore_tts.py
 
 ### 打开 demo
 
-http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进度条 seek / 播放。
+http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进度条 seek / 播放。粤语默认使用 `1.1x`，播放器也提供 `1.0/1.1/1.15/1.25x` 手动档位。
 (不再有 `?contract=` 选择器;合同改为上传进件。)
 
 ## 3. 参数一览
@@ -104,6 +104,8 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | `GPTSOVITS_REF_AUDIO_ENGINE_PATH` | 本地参考音路径 | GPT-SoVITS 在另一主机/容器时，该引擎能访问的参考音路径 |
 | `GPTSOVITS_REF_PROMPT` | `refs/cantonese_ref_trim.txt` | 共用参考音的逐字转写文件 |
 | `GPTSOVITS_REF_PROMPT_LANG` | `yue` | 共用参考音实际使用的语言，不是目标文本语言 |
+| `GPTSOVITS_FRAGMENT_INTERVAL_YUE` | `0.05` | 粤语 GPT-SoVITS 片段静音秒数；降低官方默认的明显停顿 |
+| `GPTSOVITS_TEXT_SPLIT_METHOD_YUE` | `cut0` | 粤语请求不在引擎内二次切句；合同已由 Template 切段 |
 | `GPTSOVITS_REF_AUDIO_ZH/EN` | 无 | 可选普通话/英语专属参考音；未配置时回退共用粤语参考音 |
 | `GPTSOVITS_REF_AUDIO_ENGINE_PATH_ZH/EN` | 无 | 专属参考音在远程 GPT-SoVITS 主机上的路径 |
 | `GPTSOVITS_REF_PROMPT_ZH/EN` | 无 | 专属参考音的逐字转写文件 |
@@ -117,7 +119,7 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 | `BAILIAN_VOICE` | `longjiaxin_v3` | 云端粤语音色;更换时同步提升 `ENGINE_PROFILE_CACHE_VERSION_YUE` |
 | `BAILIAN_VOICE_ZH` | `longxiaochun` | 云端普通话音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_ZH` |
 | `BAILIAN_VOICE_EN` | `longanyang` | 云端英语音色;更换时提升 `ENGINE_PROFILE_CACHE_VERSION_EN` |
-| `ENGINE_PROFILE_CACHE_VERSION_YUE` | `v1` | 粤语 profile 缓存版本;影响音频的配置变化时提升 |
+| `ENGINE_PROFILE_CACHE_VERSION_YUE` | `v2` | 粤语 profile 缓存版本;影响音频的配置变化时提升 |
 | `ENGINE_PROFILE_CACHE_VERSION_ZH` | `v1` | 普通话 profile 缓存版本;换 voice/model/参数时提升 |
 | `ENGINE_PROFILE_CACHE_VERSION_EN` | `v1` | 英语 profile 缓存版本;换 voice/model/参数时提升 |
 

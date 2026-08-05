@@ -16,7 +16,7 @@
 
 ## 当前项目与官方默认值
 
-`backend/engines/gptsovits_client.py` 当前只发送 `text`、目标语言、参考音频路径、参考文本、参考语言、`media_type=wav` 和 `streaming_mode=false`。其余参数全部由远程 `api_v2.py` 默认：
+`backend/engines/gptsovits_client.py` 会发送 `text`、目标语言、参考音频路径、参考文本、参考语言、`media_type=wav` 和 `streaming_mode=false`。粤语 Engine Profile 另外显式发送 `text_split_method=cut0` 与 `fragment_interval=0.05`，避免应用切段后被引擎二次切分，并缩短 Segment 末尾静音；普通话和英语仍使用下表中的官方默认值：
 
 | 参数 | 官方 API 默认值 | 对音质排查的意义 |
 |---|---:|---|
@@ -75,7 +75,7 @@ v3/v4 官方说明其合成语气和音色比 v2 更忠实于参考音频，这�
 
 1. 固定当前 v2、API 默认采样参数、`seed=固定值`，每种语言只轮换 2～3 个原生参考音频；选出最佳参考。
 2. 固定最佳参考，对比 v2、v2ProPlus、v4。
-3. 固定最佳模型与参考，对比 `cut5` 和 `cut0`；若单段过长，再加入 `cut2`。同时试听 `fragment_interval=0.15/0.3`，它主要改变停顿而非声码器音质。
+3. 固定最佳模型与参考，对比 `cut5` 和 `cut0`；若单段过长，再加入 `cut2`。粤语当前采用 `fragment_interval=0.05`，如需更明显的条款停顿可再试听 `0.1/0.15`；它主要改变停顿而非声码器音质。
 4. 最后只调一项采样参数：先比较 `temperature=0.7/0.85/1.0`；仍有随机漏读或重复时，再比较 `top_p=0.85/1.0`，保持 `top_k=15` 和 `repetition_penalty=1.35`。
 5. v3/v4 保持 `sample_steps=32` 做最高质量基线；只有性能不足时再比较 8 步。官方把 32 步描述为最佳音质、4/8 步描述为速度档。[官方 v3/v4 Wiki](https://github.com/RVC-Boss/GPT-SoVITS/wiki/GPT%E2%80%90SoVITS%E2%80%90v3v4%E2%80%90features-(%E6%96%B0%E7%89%B9%E6%80%A7))。
 

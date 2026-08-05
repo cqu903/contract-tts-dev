@@ -65,9 +65,9 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
   │                                          │            仍 miss → engine.synth → cache.put
   │                                          ◀── Response(200, audio/wav) ──────────┘
   │                                          引擎 HTTP 错 → 502;连接失败/其它 → 500
-浏览器拿到 wav blob → audio.src = blob → 播放
-  │ 同时 POST /api/contracts/{id}/segments/{seg_idx+1..+k}/preload → 后台预热后面 K 段
-  ▼ 播完该段 → "ended" → 自动 playFrom(seg_idx+1)
+浏览器拿到 wav blob → SegmentAudioBuffer 保存 → audio.src = blob → 播放
+  │ 同时 GET /api/contracts/{id}/segments/{seg_idx+1..+k} → 下载并保存后面 K 段 blob
+  ▼ 播完该段 → "ended" → 直接复用已下载 blob → 自动 playFrom(seg_idx+1)
 ```
 
 ## 3. seek 逻辑(`contract.py` / `segmenter.py` / 前端 `app.js`)
@@ -76,7 +76,7 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 2. **段索引**(`contract.build_index(contract_id, text)`):每段 `{seg_idx, text, est_dur_s, cumulative_start_s}`,总和 `total_est_s`。`est_dur_s` 按 Template 转换后的实际朗读文本估算（英语按词数，普通话/粤语按非空白字符），避免金额、日期和编号展开后进度条持续漂移。
 3. **进度条**:前端把一个 `range(0..1000)` 映射到 `[0, total_est_s]`,**音频还没生成就能拖**(连续流式给不了的可拖动时间轴)。
 4. **位置→段**(`contract.position_to_segment(idx, t)` / 前端 `segmentAtSeconds`):找 `cumulative_start_s ≤ t < 下一段`。**seek 吸附段边界**——拖到一段中间也从该段头播(段很短 ~5–13s,合同场景可接受;省掉子段精确 seek)。
-5. **预载**:播放某段时,后台 `POST /api/contracts/{id}/segments/{n}/preload` 预热后面 K=3 段,让顺序播放/小幅前 seek 命中缓存;上传时预热 seg 0。
+5. **预载**:浏览器通过 `SegmentAudioBuffer` 提前 GET 后面 K=3 段并保存 Promise/Blob；顺序播放切段时不再等待网络。上传时后端仍预热 seg 0，`POST .../preload` 继续作为外部预热接口保留。
 
 ## 4. 音频缓存逻辑(内容寻址,`cache.py`)
 
@@ -150,7 +150,7 @@ Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_
 | `backend/engines/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端按 Template 绑定对应 voice |
 | `backend/{normalizer,normalizers,segmenter,segmenters,cn_numbers,contract,cache,...}.py` | 旧 import 路径的兼容导出，不放业务实现 |
 | `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`; Template Registry 与 profile 选择;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |
-| `frontend/{index.html,app.js}` | 上传 demo(textarea + 进度条 + 播放/seek/预载) |
+| `frontend/{index.html,app.js,playback.mjs}` | 上传 demo(textarea + 进度条 + 分语言速度档位 + 浏览器音频缓冲/播放/seek) |
 | `contracts/sample_contract.txt` | 示例合同(demo 素材,唯一跟踪的合同) |
 | `refs/cantonese_ref_trim.{wav,txt}` | 固定粤语参考音 + 转写(7s,本地、wav gitignored) |
 

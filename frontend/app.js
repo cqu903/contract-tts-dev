@@ -1,3 +1,8 @@
+import {
+  SegmentAudioBuffer,
+  preferredPlaybackRate,
+} from "./playback.mjs";
+
 const INITIAL_SEGMENT_REQUEST_COUNT = 3;
 const PRELOAD_AHEAD = 3;
 
@@ -9,6 +14,8 @@ const textInput = document.getElementById("text");
 const uploadBtn = document.getElementById("upload");
 const templateInput = document.getElementById("template");
 const templateHint = document.getElementById("templateHint");
+const playbackRateInput = document.getElementById("playbackRate");
+const segmentAudioBuffer = new SegmentAudioBuffer();
 
 const TEMPLATE_HINTS = {
   xcash_yue: "中文合同，朗讀為粵語；使用粵語切分和文字處理。",
@@ -20,13 +27,33 @@ let contractId = null;
 let segs = [];        // [{seg_idx, est_dur_s, cumulative_start_s}]
 let totalEst = 0;
 let current = 0;
-const requestedPreloadKeys = new Set();
+let currentObjectUrl = null;
+
+function applyPlaybackRate() {
+  const rate = Number(playbackRateInput.value);
+  audio.defaultPlaybackRate = rate;
+  audio.playbackRate = rate;
+  audio.preservesPitch = true;
+}
+
+function useAudioBlob(blob) {
+  const previousObjectUrl = currentObjectUrl;
+  currentObjectUrl = URL.createObjectURL(blob);
+  audio.src = currentObjectUrl;
+  if (previousObjectUrl) URL.revokeObjectURL(previousObjectUrl);
+  applyPlaybackRate();
+}
 
 function updateTemplateHint() {
   templateHint.textContent = TEMPLATE_HINTS[templateInput.value];
+  playbackRateInput.value = String(
+    preferredPlaybackRate(templateInput.value),
+  );
+  applyPlaybackRate();
 }
 
 templateInput.addEventListener("change", updateTemplateHint);
+playbackRateInput.addEventListener("change", applyPlaybackRate);
 updateTemplateHint();
 
 function barToSeconds(v) {
@@ -43,25 +70,14 @@ function segmentAtSeconds(s) {
 }
 
 async function loadSegment(segIdx) {
-  const r = await fetch(`/api/contracts/${contractId}/segments/${segIdx}`);
-  if (!r.ok) throw new Error(`segment ${segIdx} failed: ${r.status}`);
-  return await r.blob();
+  return segmentAudioBuffer.load(contractId, segIdx);
 }
 
 function preloadSegment(segIdx) {
   if (!contractId || segIdx < 0 || segIdx >= segs.length) return;
 
   const targetContractId = contractId;
-  const requestKey = `${targetContractId}:${segIdx}`;
-  if (requestedPreloadKeys.has(requestKey)) return;
-  requestedPreloadKeys.add(requestKey);
-
-  fetch(`/api/contracts/${targetContractId}/segments/${segIdx}/preload`, {
-    method: "POST",
-  }).then((r) => {
-    if (!r.ok) throw new Error(`preload segment ${segIdx} failed: ${r.status}`);
-  }).catch((e) => {
-    requestedPreloadKeys.delete(requestKey);
+  segmentAudioBuffer.preload(targetContractId, segIdx).catch((e) => {
     console.warn(e.message);
   });
 }
@@ -77,7 +93,7 @@ async function playFrom(segIdx) {
   statusEl.textContent = `生成/載入 第 ${segIdx + 1}/${segs.length} 段…`;
   try {
     const blob = await loadSegment(segIdx);
-    audio.src = URL.createObjectURL(blob);
+    useAudioBlob(blob);
     clauseEl.textContent = `第 ${segIdx + 1}/${segs.length} 段`;
     bar.value = secondsToBar(segs[segIdx].cumulative_start_s);
     await audio.play();
@@ -126,14 +142,14 @@ uploadBtn.addEventListener("click", async () => {
     totalEst = data.total_est_s;
     bar.disabled = false;
     current = 0;
-    requestedPreloadKeys.clear();
+    segmentAudioBuffer.clear();
     // Request segment 0 plus the next two segments immediately. Only segment 0
     // blocks readiness; the following requests warm the playback buffer in parallel.
     try {
       const firstSegment = loadSegment(0);
       preloadAhead(0, INITIAL_SEGMENT_REQUEST_COUNT - 1);
       const blob = await firstSegment;
-      audio.src = URL.createObjectURL(blob);
+      useAudioBlob(blob);
       clauseEl.textContent = `第 1/${segs.length} 段`;
       bar.value = 0;
       const initialRequestCount = Math.min(

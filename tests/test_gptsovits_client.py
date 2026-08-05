@@ -27,6 +27,35 @@ def test_synth_streams_engine_bytes_and_sends_yue_payload():
     assert captured["payload"]["media_type"] == "wav"
 
 
+def test_yue_synth_can_reduce_engine_fragment_pause():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, content=b"YUE")
+
+    client = GPTSoVITSClient(
+        "http://127.0.0.1:9880",
+        ref_audio_path="/cantonese.wav",
+        prompt_text="粵語參考文本。",
+        fragment_interval=0.05,
+        text_split_method="cut0",
+    )
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in client.synth(
+                "貸款主要內容。",
+                transport=httpx.MockTransport(handler),
+            )
+        ]
+
+    assert b"".join(asyncio.run(collect())) == b"YUE"
+    assert captured["payload"]["fragment_interval"] == 0.05
+    assert captured["payload"]["text_split_method"] == "cut0"
+
+
 def test_synth_buffers_engine_error_body_before_raising():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"message": "reference audio not found"})

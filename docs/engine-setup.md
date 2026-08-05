@@ -34,6 +34,8 @@ uv pip install -p .venv -r requirements.txt
 
 默认配置使用同一个粤语参考音：粤语请求为 `text_lang=yue, prompt_lang=yue`；普通话请求为 `text_lang=zh, prompt_lang=yue`；英语请求为 `text_lang=en, prompt_lang=yue`。后两者属于官方支持的跨语言合成。
 
+粤语合同在应用层已经完成切段，因此 GPT-SoVITS 默认使用 `text_split_method=cut0`，并把 `fragment_interval` 从官方默认的 0.3 秒缩短到 0.05 秒，避免每个 Segment 末尾出现明显空白。可分别通过 `GPTSOVITS_TEXT_SPLIT_METHOD_YUE` 和 `GPTSOVITS_FRAGMENT_INTERVAL_YUE` 调整；修改后必须提升 `ENGINE_PROFILE_CACHE_VERSION_YUE`。
+
 若需要更自然的普通话或英语口音，可分别准备 3–10 秒原生参考音及逐字转写，并配置 `GPTSOVITS_REF_AUDIO_ZH/EN`、`GPTSOVITS_REF_PROMPT_ZH/EN` 和远程引擎路径。只要配置了语言专属素材，默认 `prompt_lang` 就切为目标语言；也可用 `GPTSOVITS_REF_PROMPT_LANG_ZH/EN` 显式指定。
 
 参考音决定音色、口音、韵律,但**不影响字的基本读音**(那由 `text_lang=yue` + 归一化负责);想让合成更地道港式,关键是参考音里的人本身就说地道港式粤语。

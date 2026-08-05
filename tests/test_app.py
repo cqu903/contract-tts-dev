@@ -258,6 +258,16 @@ def test_make_engine_builds_cross_lingual_gptsovits_profiles():
     assert zh.prompt_text == en.prompt_text == yue.prompt_text
 
 
+def test_make_engine_reduces_fragment_pause_only_for_cantonese():
+    yue = appmod.make_engine("gptsovits", "yue")
+    zh = appmod.make_engine("gptsovits", "zh")
+    en = appmod.make_engine("gptsovits", "en")
+
+    assert (yue.fragment_interval, yue.text_split_method) == (0.05, "cut0")
+    assert (zh.fragment_interval, zh.text_split_method) == (0.3, "cut5")
+    assert (en.fragment_interval, en.text_split_method) == (0.3, "cut5")
+
+
 def test_make_engine_uses_language_specific_engine_defaults(monkeypatch):
     monkeypatch.setattr(
         appmod,
@@ -336,7 +346,7 @@ def test_main_runs_combined_app_with_uvicorn(monkeypatch):
 
     assert call == {
         "application": appmod.app,
-        "kwargs": {"host": "127.0.0.1", "port": 8000},
+        "kwargs": {"host": "0.0.0.0", "port": 8000},
     }
 
 

@@ -10,6 +10,8 @@
     .bar { width: 100%; }
     #status { color: #555; min-height: 1.4em; }
     audio { width: 100%; margin-top: .5rem; }
+    .playback-settings { display:flex; align-items:center; gap:.5rem; margin-top:.5rem; }
+    .playback-settings select { padding:.2rem .35rem; font:inherit; }
     .clause { color: #888; font-size: .9em; margin-top: .3em; }
     button { margin-top: .5rem; }
     .hint { font-size: .85em; color: #777; }
@@ -30,8 +32,17 @@
   <hr style="margin:1rem 0;border:none;border-top:1px solid #eee" />
   <input id="bar" class="bar" type="range" min="0" max="1000" value="0" step="1" disabled />
   <div id="status">等待上傳…</div>
+  <div class="playback-settings">
+    <label for="playbackRate">播放速度</label>
+    <select id="playbackRate">
+      <option value="1">1.0×</option>
+      <option value="1.1">1.1×</option>
+      <option value="1.15">1.15×</option>
+      <option value="1.25">1.25×</option>
+    </select>
+  </div>
   <audio id="audio" controls></audio>
   <div id="clause" class="clause"></div>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

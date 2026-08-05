@@ -11,12 +11,16 @@ from opencc import OpenCC
 
 class GPTSoVITSClient:
     def __init__(self, base_url: str, ref_audio_path: str, prompt_text: str,
-                 text_lang: str = "yue", prompt_lang: str = "yue", timeout: float = 60.0):
+                 text_lang: str = "yue", prompt_lang: str = "yue",
+                 fragment_interval: float = 0.3,
+                 text_split_method: str = "cut5", timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
         self.ref_audio_path = ref_audio_path
         self.prompt_text = prompt_text
         self.text_lang = text_lang
         self.prompt_lang = prompt_lang
+        self.fragment_interval = fragment_interval
+        self.text_split_method = text_split_method
         self._text_converter = OpenCC("t2s") if text_lang == "zh" else None
         self._prompt_converter = OpenCC("t2s") if prompt_lang == "zh" else None
         self.timeout = timeout
@@ -38,6 +42,8 @@ class GPTSoVITSClient:
             "prompt_lang": self.prompt_lang,
             "media_type": "wav",
             "streaming_mode": False,
+            "fragment_interval": self.fragment_interval,
+            "text_split_method": self.text_split_method,
         }
         # trust_env=False: do NOT route localhost through HTTP_PROXY (e.g. clash on :7897) -> 502
         async with httpx.AsyncClient(timeout=self.timeout, transport=transport, trust_env=False) as client:

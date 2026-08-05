@@ -192,8 +192,23 @@ ENGINE_LANGUAGE_SETTINGS = {
     "zh": {"voice": BAILIAN_VOICE_ZH, "text_lang": "zh"},
     "en": {"voice": BAILIAN_VOICE_EN, "text_lang": "en"},
 }
+GPTSOVITS_SYNTHESIS_SETTINGS = {
+    "yue": {
+        "fragment_interval": float(
+            os.getenv("GPTSOVITS_FRAGMENT_INTERVAL_YUE", "0.05")
+        ),
+        "text_split_method": os.getenv(
+            "GPTSOVITS_TEXT_SPLIT_METHOD_YUE", "cut0"
+        ).strip(),
+    },
+    "zh": {"fragment_interval": 0.3, "text_split_method": "cut5"},
+    "en": {"fragment_interval": 0.3, "text_split_method": "cut5"},
+}
 ENGINE_PROFILE_CACHE_VERSIONS = {
-    language: os.getenv(f"ENGINE_PROFILE_CACHE_VERSION_{language.upper()}", "v1")
+    language: os.getenv(
+        f"ENGINE_PROFILE_CACHE_VERSION_{language.upper()}",
+        "v2" if language == "yue" else "v1",
+    )
     for language in ENGINE_LANGUAGE_SETTINGS
 }
 
@@ -214,12 +229,15 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
             workspace=BAILIAN_WORKSPACE_ID,
         )
     reference = GPTSOVITS_REFERENCE_PROFILES[reading_language]
+    synthesis = GPTSOVITS_SYNTHESIS_SETTINGS[reading_language]
     return GPTSoVITSClient(
         ENGINE_URL,
         reference.ref_audio_path,
         reference.prompt_text,
         text_lang=settings["text_lang"],
         prompt_lang=reference.prompt_lang,
+        fragment_interval=synthesis["fragment_interval"],
+        text_split_method=synthesis["text_split_method"],
     )
 
 
