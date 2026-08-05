@@ -26,11 +26,17 @@ uv pip install -p .venv -r requirements.txt
 - `GPT_SoVITS/text/G2PWModel/` — 中文 G2PW(v2 中文必需)。
 - 下载链接见上游 README 的 "pretrained_models" 与 "G2PWModel" 段。
 
-## 4. 粤语参考音频(voice-clone 锚)
+## 4. 共用与语言专属参考音频（voice-clone 锚）
 
 - 准备一段 **3–10 秒**干净粤语人声(GPT-SoVITS 硬性要求,否则报 `参考音频在3~10秒范围外`)放到:`refs/cantonese_ref_trim.wav`(mono,16k/24k/48k)。
 - 把该音频的**粤语转写**写到:`refs/cantonese_ref_trim.txt`(整段文本,作 `prompt_text`)。`app.py` 读的就是这两个 trim 文件。
-- 没有的话:自己录一段后裁到 3–10 秒,或用公开粤语短音频裁剪;只需一个固定粤语参考。
+- 没有的话:自己录一段后裁到 3–10 秒,或用公开粤语短音频裁剪。这个固定粤语参考可作为三种目标语言的共用音色。
+
+默认配置使用同一个粤语参考音：粤语请求为 `text_lang=yue, prompt_lang=yue`；普通话请求为 `text_lang=zh, prompt_lang=yue`；英语请求为 `text_lang=en, prompt_lang=yue`。后两者属于官方支持的跨语言合成。
+
+粤语合同在应用层已经完成切段，因此 GPT-SoVITS 默认使用 `text_split_method=cut0`，并把 `fragment_interval` 从官方默认的 0.3 秒缩短到 0.05 秒，避免每个 Segment 末尾出现明显空白。可分别通过 `GPTSOVITS_TEXT_SPLIT_METHOD_YUE` 和 `GPTSOVITS_FRAGMENT_INTERVAL_YUE` 调整；修改后必须提升 `ENGINE_PROFILE_CACHE_VERSION_YUE`。
+
+若需要更自然的普通话或英语口音，可分别准备 3–10 秒原生参考音及逐字转写，并配置 `GPTSOVITS_REF_AUDIO_ZH/EN`、`GPTSOVITS_REF_PROMPT_ZH/EN` 和远程引擎路径。只要配置了语言专属素材，默认 `prompt_lang` 就切为目标语言；也可用 `GPTSOVITS_REF_PROMPT_LANG_ZH/EN` 显式指定。
 
 参考音决定音色、口音、韵律,但**不影响字的基本读音**(那由 `text_lang=yue` + 归一化负责);想让合成更地道港式,关键是参考音里的人本身就说地道港式粤语。
 
@@ -44,7 +50,7 @@ uv pip install -p .venv -r requirements.txt
 2. 把**裁出片段**的逐字粤语转写覆盖到 `refs/cantonese_ref_trim.txt` —— 必须与音频逐字对齐,否则克隆质量下降。
 3. **清缓存**(音色不入缓存键,ADR-0006;不清的话旧音最长存活 30 天):
    ```bash
-   rm -rf cache/        # 或 bump CONTRACT_TTS_ENGINE(如 gptsovits-v2) 后重启服务
+   rm -rf cache/        # 或提升受影响语言的 ENGINE_PROFILE_CACHE_VERSION_* 后重启
    ```
 4. 重启服务、试听一段确认音色 / 口音。
 
@@ -55,7 +61,7 @@ cd /path/to/GPT-SoVITS
 uv run python api_v2.py      # 默认 127.0.0.1:9880
 ```
 
-## 6. 验证粤语(冒烟)
+## 6. 验证三种语言（冒烟）
 
 ```bash
 REF=refs/cantonese_ref_trim.wav
@@ -68,6 +74,17 @@ ls -la /tmp/yue_smoke.wav   # KB+ = 拿到音频
 ```
 
 听 `/tmp/yue_smoke.wav`:**M0 通过线 = 听起来是粤语**(不做母语级地道评判,那是后续单独关卡)。若像"普通话读粤字",记下来 —— 这是推迟的地道性风险,架构仍可继续(引擎解耦)。
+
+使用同一粤语参考音验证跨语言合成时，只改目标文本和 `text_lang`，`prompt_lang` 仍为 `yue`：
+
+```bash
+curl -s -X POST http://127.0.0.1:9880/tts -H 'Content-Type: application/json' \
+  -d "{\"text\":\"借款人应在三十日内还款。\",\"text_lang\":\"zh\",\"ref_audio_path\":\"$REF\",\"prompt_text\":\"$PROMPT\",\"prompt_lang\":\"yue\",\"media_type\":\"wav\",\"streaming_mode\":false}" \
+  -o /tmp/zh_smoke.wav
+curl -s -X POST http://127.0.0.1:9880/tts -H 'Content-Type: application/json' \
+  -d "{\"text\":\"The borrower shall repay the loan within thirty days.\",\"text_lang\":\"en\",\"ref_audio_path\":\"$REF\",\"prompt_text\":\"$PROMPT\",\"prompt_lang\":\"yue\",\"media_type\":\"wav\",\"streaming_mode\":false}" \
+  -o /tmp/en_smoke.wav
+```
 
 ## 7. 确认 /tts 参数名
 

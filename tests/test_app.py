@@ -1,4 +1,7 @@
+import hashlib
+import os
 import time
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 import backend.app as appmod
@@ -11,9 +14,11 @@ from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 class FakeEngine:
     def __init__(self):
         self.calls = 0
+        self.texts = []
 
     async def synth(self, text, transport=None):
         self.calls += 1
+        self.texts.append(text)
         yield f"audio:{text}".encode()
 
 
@@ -62,6 +67,128 @@ def test_unknown_template_id_returns_400(tmp_path, monkeypatch):
     assert r.status_code == 400
 
 
+def test_upload_rejects_control_only_contract_text(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    response = client.post(
+        "/api/contracts",
+        json={"text": "\x00\x01\x02", "template_id": "xcash_yue"},
+    )
+
+    assert response.status_code == 400
+    assert list((tmp_path / "uploaded").glob("*.txt")) == []
+
+
+def test_upload_echoes_canonical_template_id(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    response = client.post(
+        "/api/contracts",
+        json={"text": "普通话合同。", "template_id": "xcash_yue"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["template_id"] == "xcash_yue"
+
+
+def test_frontend_assets_disable_conditional_browser_cache():
+    client = TestClient(appmod.app)
+
+    first = client.get("/app.js")
+    second = client.get(
+        "/app.js",
+        headers={
+            "If-None-Match": first.headers.get("etag", '"stale"'),
+            "If-Modified-Since": first.headers.get(
+                "last-modified", "Wed, 21 Oct 2015 07:28:00 GMT"
+            ),
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.headers["cache-control"] == "no-store, no-cache, must-revalidate"
+
+
+def test_frontend_initially_requests_three_segments():
+    client = TestClient(appmod.app)
+
+    source = client.get("/app.js").text
+
+    assert "const INITIAL_SEGMENT_REQUEST_COUNT = 3;" in source
+    assert "const firstSegment = loadSegment(0);" in source
+    assert "preloadAhead(0, INITIAL_SEGMENT_REQUEST_COUNT - 1);" in source
+
+
+def test_xcash_alias_and_canonical_template_share_new_contract_id(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+
+    alias = _upload(client, text="同一份合同。", template_id="xcash")
+    canonical = _upload(client, text="同一份合同。", template_id="xcash_yue")
+
+    assert alias == canonical
+
+
+def test_unavailable_template_profile_returns_503_without_creating_contract(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    profile = appmod.TEMPLATE_REGISTRY["xcash_yue"]
+    unavailable = replace(
+        profile,
+        engine_profile=replace(profile.engine_profile, available=False),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", unavailable)
+    client = TestClient(appmod.app)
+
+    r = client.post("/api/contracts", json={"text": "不可用。", "template_id": "xcash_yue"})
+
+    assert r.status_code == 503
+    assert list((tmp_path / "uploaded").glob("*.txt")) == []
+
+
+def test_template_profile_selects_its_engine_provider(tmp_path, monkeypatch):
+    default_engine = _setup(tmp_path, monkeypatch)
+    selected_engine = FakeEngine()
+    profile = appmod.TEMPLATE_REGISTRY["xcash_yue"]
+    selected = replace(
+        profile,
+        engine_profile=replace(
+            profile.engine_profile,
+            engine_provider=lambda: selected_engine,
+        ),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", selected)
+    client = TestClient(appmod.app)
+
+    _upload(client, text="选择 profile。", template_id="xcash_yue")
+
+    assert selected_engine.calls == 1
+    assert default_engine.calls == 0
+
+
+def test_new_pipeline_does_not_hit_legacy_cache_key(tmp_path, monkeypatch):
+    fake = _setup(tmp_path, monkeypatch)
+    client = TestClient(appmod.app)
+    cid = _upload(client, text="第一句。第二句！")
+
+    from backend.normalizer import normalize_for_tts
+
+    tts_text = normalize_for_tts("第二句！")
+    legacy_key = hashlib.sha256(
+        f"{tts_text}|{appmod.ENGINE_NAME}".encode("utf-8")
+    ).hexdigest()
+    appmod.cache.put(legacy_key, b"legacy-audio")
+    baseline = fake.calls
+
+    response = client.get(f"/api/contracts/{cid}/segments/1")
+
+    assert response.status_code == 200
+    assert response.content != b"legacy-audio"
+    assert fake.calls == baseline + 1
+
+
 def test_unknown_contract_returns_404(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     client = TestClient(appmod.app)
@@ -92,8 +219,135 @@ def test_make_engine_bailian_reads_api_key_and_default_voice(monkeypatch):
     assert e.voice == "longjiaxin_v3"   # native Cantonese voice (粤语/英文)
 
 
+def test_make_engine_passes_bailian_transport_configuration(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-x")
+    monkeypatch.setattr(appmod, "BAILIAN_TRANSPORT", "wss")
+    monkeypatch.setattr(appmod, "BAILIAN_MODEL", "cosyvoice-v3-flash")
+    monkeypatch.setattr(
+        appmod,
+        "BAILIAN_WS_URL",
+        "wss://workspace.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/inference",
+    )
+    monkeypatch.setattr(appmod, "BAILIAN_WORKSPACE_ID", "ws-test")
+
+    engine = appmod.make_engine("bailian", "en")
+
+    assert engine.transport_mode == "wss"
+    assert engine.model == "cosyvoice-v3-flash"
+    assert engine.voice == appmod.BAILIAN_VOICE_EN
+    assert engine.ws_url.startswith("wss://workspace.ap-southeast-1")
+    assert engine.workspace == "ws-test"
+
+
 def test_make_engine_defaults_to_gptsovits():
     assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
+
+
+def test_make_engine_builds_cross_lingual_gptsovits_profiles():
+    yue = appmod.make_engine("gptsovits", "yue")
+    zh = appmod.make_engine("gptsovits", "zh")
+    en = appmod.make_engine("gptsovits", "en")
+
+    assert (yue.text_lang, zh.text_lang, en.text_lang) == ("yue", "zh", "en")
+    assert (yue.prompt_lang, zh.prompt_lang, en.prompt_lang) == (
+        "yue",
+        "yue",
+        "yue",
+    )
+    assert zh.ref_audio_path == en.ref_audio_path == yue.ref_audio_path
+    assert zh.prompt_text == en.prompt_text == yue.prompt_text
+
+
+def test_make_engine_reduces_fragment_pause_only_for_cantonese():
+    yue = appmod.make_engine("gptsovits", "yue")
+    zh = appmod.make_engine("gptsovits", "zh")
+    en = appmod.make_engine("gptsovits", "en")
+
+    assert (yue.fragment_interval, yue.text_split_method) == (0.05, "cut0")
+    assert (zh.fragment_interval, zh.text_split_method) == (0.3, "cut5")
+    assert (en.fragment_interval, en.text_split_method) == (0.3, "cut5")
+
+
+def test_make_engine_uses_language_specific_engine_defaults(monkeypatch):
+    monkeypatch.setattr(
+        appmod,
+        "ENGINE_NAMES",
+        {"yue": "gptsovits", "zh": "bailian", "en": "gptsovits"},
+    )
+
+    assert isinstance(appmod.make_engine(reading_language="yue"), GPTSoVITSClient)
+    assert isinstance(
+        appmod.make_engine(reading_language="zh"), BailianCosyVoiceClient
+    )
+    assert isinstance(appmod.make_engine(reading_language="en"), GPTSoVITSClient)
+    assert isinstance(appmod.make_engine("cosyvoice", "en"), BailianCosyVoiceClient)
+
+
+def test_language_specific_gptsovits_reference_overrides_cross_lingual_fallback(
+    tmp_path, monkeypatch
+):
+    prompt_path = tmp_path / "mandarin.txt"
+    prompt_path.write_text("這是一段普通話參考文本。", encoding="utf-8")
+    monkeypatch.setenv("GPTSOVITS_REF_AUDIO_ENGINE_PATH_ZH", "/refs/mandarin.wav")
+    monkeypatch.setenv("GPTSOVITS_REF_PROMPT_ZH", str(prompt_path))
+    monkeypatch.delenv("GPTSOVITS_REF_PROMPT_LANG_ZH", raising=False)
+    fallback = appmod._GPTSoVITSReferenceProfile(
+        ref_audio_path="/refs/cantonese.wav",
+        prompt_text="粵語參考文本。",
+        prompt_lang="yue",
+    )
+
+    profile = appmod._reference_profile_from_env("zh", fallback)
+
+    assert profile.ref_audio_path == "/refs/mandarin.wav"
+    assert profile.prompt_text == "這是一段普通話參考文本。"
+    assert profile.prompt_lang == "zh"
+
+
+def test_load_project_env_loads_defaults_without_overriding_environment(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "CONTRACT_TTS_TEST_FROM_FILE=loaded\n"
+        "CONTRACT_TTS_TEST_PRECEDENCE=from-file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CONTRACT_TTS_TEST_FROM_FILE", raising=False)
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PRECEDENCE", "from-environment")
+
+    appmod._load_project_env(env_file)
+
+    assert os.getenv("CONTRACT_TTS_TEST_FROM_FILE") == "loaded"
+    assert os.getenv("CONTRACT_TTS_TEST_PRECEDENCE") == "from-environment"
+
+
+def test_project_path_from_env_supports_relative_and_absolute_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PATH", "refs/custom.wav")
+    assert appmod._project_path_from_env(
+        "CONTRACT_TTS_TEST_PATH", "unused.wav"
+    ) == appmod.ROOT / "refs" / "custom.wav"
+
+    absolute_path = tmp_path / "custom.wav"
+    monkeypatch.setenv("CONTRACT_TTS_TEST_PATH", str(absolute_path))
+    assert appmod._project_path_from_env(
+        "CONTRACT_TTS_TEST_PATH", "unused.wav"
+    ) == absolute_path
+
+
+def test_main_runs_combined_app_with_uvicorn(monkeypatch):
+    call = {}
+
+    def fake_run(application, **kwargs):
+        call["application"] = application
+        call["kwargs"] = kwargs
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    appmod.main()
+
+    assert call == {
+        "application": appmod.app,
+        "kwargs": {"host": "0.0.0.0", "port": 8000},
+    }
 
 
 def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):

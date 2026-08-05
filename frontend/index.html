@@ -3,28 +3,46 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>粵語合同朗讀 — 對外服務 demo</title>
+  <title>多語言合同朗讀 — 對外服務 demo</title>
   <style>
     body { font: 16px/1.6 -apple-system, "PingFang HK", sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
     textarea { width: 100%; height: 180px; font: inherit; box-sizing: border-box; }
     .bar { width: 100%; }
     #status { color: #555; min-height: 1.4em; }
     audio { width: 100%; margin-top: .5rem; }
+    .playback-settings { display:flex; align-items:center; gap:.5rem; margin-top:.5rem; }
+    .playback-settings select { padding:.2rem .35rem; font:inherit; }
     .clause { color: #888; font-size: .9em; margin-top: .3em; }
     button { margin-top: .5rem; }
     .hint { font-size: .85em; color: #777; }
   </style>
 </head>
 <body>
-  <h2>粵語合同朗讀(對外服務 demo)</h2>
-  <p class="hint">貼上合同 TXT(template 固定 <code>xcash</code>)→ 上傳切片 → 拖動進度條 seek / 自動續播。</p>
+  <h2>多語言合同朗讀(對外服務 demo)</h2>
+  <p class="hint">選擇合同模板後貼上原文；模板會同時決定切分、文字處理和朗讀語言。</p>
+  <label for="template">朗讀模板</label>
+  <select id="template" style="display:block;margin:.35rem 0 1rem;padding:.35rem;font:inherit;">
+    <option value="xcash_yue">中文合同 → 粵語</option>
+    <option value="xcash_zh">中文合同 → 普通話</option>
+    <option value="xcash_en">英文合同 → English</option>
+  </select>
+  <p id="templateHint" class="hint"></p>
   <textarea id="text" placeholder="貼上合同文字…"></textarea>
   <button id="upload">上傳並切片</button>
   <hr style="margin:1rem 0;border:none;border-top:1px solid #eee" />
   <input id="bar" class="bar" type="range" min="0" max="1000" value="0" step="1" disabled />
   <div id="status">等待上傳…</div>
+  <div class="playback-settings">
+    <label for="playbackRate">播放速度</label>
+    <select id="playbackRate">
+      <option value="1">1.0×</option>
+      <option value="1.1">1.1×</option>
+      <option value="1.15">1.15×</option>
+      <option value="1.25">1.25×</option>
+    </select>
+  </div>
   <audio id="audio" controls></audio>
   <div id="clause" class="clause"></div>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

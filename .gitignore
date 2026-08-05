@@ -4,6 +4,11 @@ __pycache__/
 .venv/
 .python-version.local
 
+# Local secrets and runtime configuration
+.env
+.env.*
+!.env.example
+
 # Jupyter
 .ipynb_checkpoints/
 
@@ -37,3 +42,6 @@ contracts/*
 # OS / logs
 .DS_Store
 *.log
+
+# IDE metadata (project-local settings)
+.idea/

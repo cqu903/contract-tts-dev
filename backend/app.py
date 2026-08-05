@@ -1,63 +1,244 @@
-"""FastAPI orchestrator for the external Cantonese contract-TTS service.
+"""FastAPI orchestrator for the external multilingual contract-TTS service.
 
 Callers POST a contract TXT + template_id, get back a content-addressed contract_id,
 then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
 
-Pipeline: upload → compute_contract_id → store raw text → build_index (deterministic
-split) → normalize_for_tts (per segment, on demand) → engine.synth → content-addressed
-cache → audio/wav. Seek maps a progress position onto a segment boundary.
+Pipeline: upload → canonical Template lookup → compute_contract_id → store raw text
+and Template metadata → profile-specific deterministic split → profile-specific
+normalization → selected Engine Profile → content-addressed cache → audio/wav.
+Seek maps a progress position onto a segment boundary.
 """
 from __future__ import annotations
 import asyncio
 import os
+import sys
 import time
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
+# Allow `python backend/app.py` and IDE "Run app.py" in addition to module import.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.contract import build_index, compute_contract_id, ContractStore, SegmentIndex
-from backend.cache import cache_key, SegmentCache
-from backend.gptsovits_client import GPTSoVITSClient
-from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
-from backend.normalizer import normalize_for_tts
+from backend.storage.contract import (
+    ContractStore,
+    SegmentIndex,
+    build_index,
+    compute_contract_id,
+)
+from backend.storage.cache import SegmentCache, cache_key
+from backend.engines.gptsovits_client import GPTSoVITSClient
+from backend.engines.bailian_cosyvoice_client import (
+    BailianCosyVoiceClient,
+    BailianSynthesisError,
+)
+from backend.templates import (
+    TemplateProfile,
+    build_template_registry,
+    canonical_engine_name,
+    canonical_template_id,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_project_env(dotenv_path: Path = ROOT / ".env") -> None:
+    """Load local defaults without replacing explicitly configured environment."""
+    load_dotenv(dotenv_path=dotenv_path, override=False)
+
+
+_load_project_env()
+
 FRONTEND_DIR = ROOT / "frontend"
 CACHE_DIR = ROOT / "cache"
 UPLOADED_DIR = ROOT / "uploaded"
 
-# --- 本地引擎配置（硬编码） ---
-ENGINE_URL = "http://127.0.0.1:9880"
+
+def _project_path_from_env(name: str, default: str) -> Path:
+    """Resolve an environment-configured path relative to the project root."""
+    path = Path(os.getenv(name, default)).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+# --- 本地引擎配置 ---
+ENGINE_URL = os.getenv("GPTSOVITS_ENGINE_URL", "http://127.0.0.1:9880")
 # NOTE: GPT-SoVITS 拒绝 3-10s 以外的参考音；用裁好的 7s 参考。
-REF_AUDIO = str(ROOT / "refs" / "cantonese_ref_trim.wav")
-REF_PROMPT = (ROOT / "refs" / "cantonese_ref_trim.txt").read_text(encoding="utf-8").strip() \
-    if (ROOT / "refs" / "cantonese_ref_trim.txt").exists() else ""
+REF_AUDIO_PATH = _project_path_from_env(
+    "GPTSOVITS_REF_AUDIO", "refs/cantonese_ref_trim.wav"
+)
+# When GPT-SoVITS runs on another machine, it must receive a path that exists on
+# that machine. Keep the existing local path as the default for same-host setups.
+REF_AUDIO_ENGINE_PATH = os.getenv("GPTSOVITS_REF_AUDIO_ENGINE_PATH", "").strip()
+REF_PROMPT_PATH = _project_path_from_env(
+    "GPTSOVITS_REF_PROMPT", "refs/cantonese_ref_trim.txt"
+)
+REF_AUDIO = REF_AUDIO_ENGINE_PATH or str(REF_AUDIO_PATH)
+REF_PROMPT = (
+    REF_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    if REF_PROMPT_PATH.exists()
+    else ""
+)
 
-# --- 引擎选择 ---
-# 两个 client 都实现 synth(text) -> AsyncIterator[bytes]；归一化留在 app 层（共用
-# normalizer.py），换引擎无需改动别处。
-# CONTRACT_TTS_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
-ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
-BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语（粤语/英文）
 
-# 已知如何切片/归一化的模板。v1：仅 xcash（ADR-0005）。
-KNOWN_TEMPLATES = {"xcash"}
+@dataclass(frozen=True)
+class _GPTSoVITSReferenceProfile:
+    """Reference voice configuration, independent from the target language."""
+
+    ref_audio_path: str
+    prompt_text: str
+    prompt_lang: str
 
 
-def make_engine(name: str | None = None):
-    """构造 TTS 引擎。name=None -> 读 CONTRACT_TTS_ENGINE 环境变量（默认 gptsovits）。"""
-    name = name or ENGINE_NAME
+def _reference_profile_from_env(
+    language: str,
+    fallback: _GPTSoVITSReferenceProfile,
+) -> _GPTSoVITSReferenceProfile:
+    """Load an optional native-language reference, otherwise cross-language fallback."""
+    suffix = language.upper()
+    audio_name = f"GPTSOVITS_REF_AUDIO_{suffix}"
+    engine_audio_name = f"GPTSOVITS_REF_AUDIO_ENGINE_PATH_{suffix}"
+    prompt_name = f"GPTSOVITS_REF_PROMPT_{suffix}"
+    prompt_lang_name = f"GPTSOVITS_REF_PROMPT_LANG_{suffix}"
+
+    audio_override = os.getenv(audio_name, "").strip()
+    engine_audio_override = os.getenv(engine_audio_name, "").strip()
+    prompt_override = os.getenv(prompt_name, "").strip()
+    prompt_lang_override = os.getenv(prompt_lang_name, "").strip().lower()
+    has_language_reference = bool(
+        audio_override or engine_audio_override or prompt_override
+    )
+
+    if engine_audio_override:
+        ref_audio_path = engine_audio_override
+    elif audio_override:
+        ref_audio_path = str(_project_path_from_env(audio_name, audio_override))
+    else:
+        ref_audio_path = fallback.ref_audio_path
+
+    if prompt_override:
+        prompt_path = _project_path_from_env(prompt_name, prompt_override)
+        prompt_text = (
+            prompt_path.read_text(encoding="utf-8").strip()
+            if prompt_path.exists()
+            else ""
+        )
+    else:
+        prompt_text = fallback.prompt_text
+
+    prompt_lang = prompt_lang_override or (
+        language if has_language_reference else fallback.prompt_lang
+    )
+    if prompt_lang not in {"zh", "yue", "en"}:
+        raise ValueError(
+            f"{prompt_lang_name} must be one of: zh, yue, en"
+        )
+    return _GPTSoVITSReferenceProfile(
+        ref_audio_path=ref_audio_path,
+        prompt_text=prompt_text,
+        prompt_lang=prompt_lang,
+    )
+
+
+_COMMON_GPTSOVITS_REFERENCE = _GPTSoVITSReferenceProfile(
+    ref_audio_path=REF_AUDIO,
+    prompt_text=REF_PROMPT,
+    prompt_lang=os.getenv("GPTSOVITS_REF_PROMPT_LANG", "yue").strip().lower(),
+)
+_YUE_GPTSOVITS_REFERENCE = _reference_profile_from_env(
+    "yue", _COMMON_GPTSOVITS_REFERENCE
+)
+GPTSOVITS_REFERENCE_PROFILES = {
+    "yue": _YUE_GPTSOVITS_REFERENCE,
+    "zh": _reference_profile_from_env("zh", _YUE_GPTSOVITS_REFERENCE),
+    "en": _reference_profile_from_env("en", _YUE_GPTSOVITS_REFERENCE),
+}
+
+# --- Per-language engine selection ---
+# Both adapters expose synth(text) -> AsyncIterator[bytes]. The language-specific
+# environment variables override the legacy process-wide fallback.
+ENGINE_NAME = canonical_engine_name(
+    os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
+)
+ENGINE_NAMES = {
+    language: canonical_engine_name(
+        os.getenv(f"CONTRACT_TTS_ENGINE_{language.upper()}", "").strip()
+        or ENGINE_NAME
+    )
+    for language in ("yue", "zh", "en")
+}
+BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
+BAILIAN_HTTP_BASE_URL = os.getenv(
+    "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
+)
+BAILIAN_WS_URL = os.getenv(
+    "BAILIAN_WS_URL",
+    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference",
+)
+BAILIAN_MODEL = os.getenv("BAILIAN_MODEL", "cosyvoice-v3-flash")
+BAILIAN_WORKSPACE_ID = os.getenv("BAILIAN_WORKSPACE_ID") or None
+BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语
+BAILIAN_VOICE_ZH = os.getenv("BAILIAN_VOICE_ZH", "longxiaochun")
+BAILIAN_VOICE_EN = os.getenv("BAILIAN_VOICE_EN", "longanyang")
+ENGINE_LANGUAGE_SETTINGS = {
+    "yue": {"voice": BAILIAN_VOICE, "text_lang": "yue"},
+    "zh": {"voice": BAILIAN_VOICE_ZH, "text_lang": "zh"},
+    "en": {"voice": BAILIAN_VOICE_EN, "text_lang": "en"},
+}
+GPTSOVITS_SYNTHESIS_SETTINGS = {
+    "yue": {
+        "fragment_interval": float(
+            os.getenv("GPTSOVITS_FRAGMENT_INTERVAL_YUE", "0.05")
+        ),
+        "text_split_method": os.getenv(
+            "GPTSOVITS_TEXT_SPLIT_METHOD_YUE", "cut0"
+        ).strip(),
+    },
+    "zh": {"fragment_interval": 0.3, "text_split_method": "cut5"},
+    "en": {"fragment_interval": 0.3, "text_split_method": "cut5"},
+}
+ENGINE_PROFILE_CACHE_VERSIONS = {
+    language: os.getenv(
+        f"ENGINE_PROFILE_CACHE_VERSION_{language.upper()}",
+        "v2" if language == "yue" else "v1",
+    )
+    for language in ENGINE_LANGUAGE_SETTINGS
+}
+
+
+def make_engine(name: str | None = None, reading_language: str = "yue"):
+    """Construct the configured adapter for one reading-language profile."""
+    name = canonical_engine_name(name or ENGINE_NAMES[reading_language])
+    settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
         return BailianCosyVoiceClient(
             api_key=os.getenv("DASHSCOPE_API_KEY", ""),
-            voice=BAILIAN_VOICE,
+            model=BAILIAN_MODEL,
+            voice=settings["voice"],
+            text_lang=settings["text_lang"],
+            transport_mode=BAILIAN_TRANSPORT,
+            http_base_url=BAILIAN_HTTP_BASE_URL,
+            ws_url=BAILIAN_WS_URL,
+            workspace=BAILIAN_WORKSPACE_ID,
         )
-    return GPTSoVITSClient(ENGINE_URL, REF_AUDIO, REF_PROMPT)
+    reference = GPTSOVITS_REFERENCE_PROFILES[reading_language]
+    synthesis = GPTSOVITS_SYNTHESIS_SETTINGS[reading_language]
+    return GPTSoVITSClient(
+        ENGINE_URL,
+        reference.ref_audio_path,
+        reference.prompt_text,
+        text_lang=settings["text_lang"],
+        prompt_lang=reference.prompt_lang,
+        fragment_interval=synthesis["fragment_interval"],
+        text_split_method=synthesis["text_split_method"],
+    )
 
 
 class ContractUpload(BaseModel):
@@ -65,9 +246,25 @@ class ContractUpload(BaseModel):
     template_id: str
 
 
+def _has_readable_contract_text(text: str) -> bool:
+    """Reject whitespace/control-only bodies without constraining real names or values."""
+    return any(char.isprintable() and not char.isspace() for char in text)
+
+
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
-engine = make_engine()
+engine = make_engine(reading_language="yue")
+TEMPLATE_REGISTRY = build_template_registry(
+    engine_name=ENGINE_NAME,
+    engine_names=ENGINE_NAMES,
+    api_key=os.getenv("DASHSCOPE_API_KEY", ""),
+    engine_provider=lambda: engine,
+    engine_providers={
+        "zh": lambda: make_engine(reading_language="zh"),
+        "en": lambda: make_engine(reading_language="en"),
+    },
+    cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
+)
 
 
 # --- 过期清理（ADR-0007）---
@@ -114,6 +311,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Cantonese Contract TTS Service", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def disable_frontend_cache(request, call_next):
+    """Always serve current demo assets; API responses retain normal caching."""
+    if not request.url.path.startswith("/api/"):
+        request.scope["headers"] = [
+            (name, value)
+            for name, value in request.scope["headers"]
+            if name.lower() not in {b"if-none-match", b"if-modified-since"}
+        ]
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # per-key 生成锁：并发的相同请求只合成一次
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -124,18 +339,62 @@ def _lock_for(key: str) -> asyncio.Lock:
     return _locks[key]
 
 
-def _load_idx_or_404(contract_id: str, seg_idx: int | None = None) -> SegmentIndex:
+def _profile_for_input(template_id: str) -> TemplateProfile:
+    try:
+        canonical = canonical_template_id(template_id, TEMPLATE_REGISTRY)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"unknown template_id: {template_id}")
+    profile = TEMPLATE_REGISTRY[canonical]
+    if not profile.engine_profile.available:
+        raise HTTPException(status_code=503, detail=f"template profile unavailable: {canonical}")
+    return profile
+
+
+def _load_idx_or_404(contract_id: str, seg_idx: int | None = None) -> tuple[SegmentIndex, TemplateProfile]:
     """取原文并切片；contract_id 未知 → 404；seg_idx 给定且越界 → 404。"""
     text = CONTRACT_STORE.get(contract_id)
-    if text is None:
+    template_id = CONTRACT_STORE.get_template_id(contract_id)
+    if text is None or template_id is None:
         raise HTTPException(status_code=404, detail="unknown contract")
-    idx = build_index(contract_id, text)
+    profile = TEMPLATE_REGISTRY.get(template_id)
+    if profile is None or not profile.engine_profile.available:
+        raise HTTPException(status_code=404, detail="unknown contract")
+    idx = build_index(
+        contract_id,
+        text,
+        splitter=profile.splitter,
+        duration_estimator=profile.duration_estimator,
+        duration_text_transform=profile.normalizer,
+    )
     if seg_idx is not None and (seg_idx < 0 or seg_idx >= len(idx.segments)):
         raise HTTPException(status_code=404, detail="seg_idx out of range")
-    return idx
+    return idx, profile
 
 
-async def _synth_and_cache(key: str, tts_text: str) -> bytes:
+def _cache_identity(profile: TemplateProfile, tts_text: str) -> str:
+    engine_profile = profile.engine_profile
+    return cache_key(
+        profile.id,
+        tts_text,
+        engine_profile.id,
+        engine_profile.cache_version,
+    )
+
+
+def _engine_for(profile: TemplateProfile):
+    return profile.engine_profile.engine_provider()
+
+
+def _prepare_engine_text(selected_engine, text: str) -> str:
+    prepare_text = getattr(selected_engine, "prepare_text", None)
+    return prepare_text(text) if callable(prepare_text) else text
+
+
+async def _synth_and_cache(
+    key: str,
+    engine_input_text: str,
+    selected_engine,
+) -> bytes:
     """合成音频并写入缓存，返回字节。命中缓存则直接读回；未命中则在 per-key 锁内
     合成（并发的相同请求只合成一次）。"""
     cached = cache.get(key)
@@ -146,7 +405,7 @@ async def _synth_and_cache(key: str, tts_text: str) -> bytes:
         if cached_again is not None:
             return cached_again.read_bytes()
         buf = bytearray()
-        async for chunk in engine.synth(tts_text):
+        async for chunk in selected_engine.synth(engine_input_text):
             buf.extend(chunk)
         data = bytes(buf)
         cache.put(key, data)
@@ -168,59 +427,80 @@ def _index_response(idx: SegmentIndex) -> dict:
 async def _warm_segment(contract_id: str, seg_idx: int) -> None:
     """后台把某段音频合成入缓存（上传时用于预热 seg 0）。"""
     try:
-        idx = _load_idx_or_404(contract_id, seg_idx)
-        tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-        key = cache_key(tts_text, ENGINE_NAME)
-        await _synth_and_cache(key, tts_text)
+        idx, profile = _load_idx_or_404(contract_id, seg_idx)
+        input_text = idx.segments[seg_idx].text
+        normalized_text = profile.normalizer(input_text)
+        selected_engine = _engine_for(profile)
+        tts_text = _prepare_engine_text(selected_engine, normalized_text)
+        key = _cache_identity(profile, tts_text)
+        await _synth_and_cache(key, normalized_text, selected_engine)
     except Exception as e:
         print(f"[warm seg {seg_idx}] failed: {e}", flush=True)
 
 
 @app.post("/api/contracts")
 def upload_contract(body: ContractUpload, background_tasks: BackgroundTasks):
-    if body.template_id not in KNOWN_TEMPLATES:
-        raise HTTPException(status_code=400, detail=f"unknown template_id: {body.template_id}")
-    if not body.text.strip():
+    profile = _profile_for_input(body.template_id)
+    if not _has_readable_contract_text(body.text):
         raise HTTPException(status_code=400, detail="text is empty")
-    cid = compute_contract_id(body.text, body.template_id)
-    CONTRACT_STORE.put(cid, body.text)
-    idx = build_index(cid, body.text)
+    cid = compute_contract_id(body.text, profile.id)
+    idx = build_index(
+        cid,
+        body.text,
+        splitter=profile.splitter,
+        duration_estimator=profile.duration_estimator,
+        duration_text_transform=profile.normalizer,
+    )
+    if not idx.segments:
+        raise HTTPException(status_code=400, detail="text has no readable segments")
+    CONTRACT_STORE.put(cid, body.text, template_id=profile.id)
     # 预热 seg 0，让首次播放即点即响（前端上传后立即加载 seg 0）
     background_tasks.add_task(_warm_segment, cid, 0)
-    return _index_response(idx)
+    response = _index_response(idx)
+    response["template_id"] = profile.id
+    return response
 
 
 @app.get("/api/contracts/{contract_id}")
 def get_contract(contract_id: str):
-    return _index_response(_load_idx_or_404(contract_id))
+    idx, _profile = _load_idx_or_404(contract_id)
+    return _index_response(idx)
 
 
 @app.get("/api/contracts/{contract_id}/segments/{seg_idx}")
 async def get_segment(contract_id: str, seg_idx: int):
-    idx = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = normalize_for_tts(idx.segments[seg_idx].text)   # 阿拉伯数字 → 中文，确保读法正确
-    key = cache_key(tts_text, ENGINE_NAME)
+    idx, profile = _load_idx_or_404(contract_id, seg_idx)
+    input_text = idx.segments[seg_idx].text
+    normalized_text = profile.normalizer(input_text)
+    selected_engine = _engine_for(profile)
+    tts_text = _prepare_engine_text(selected_engine, normalized_text)
+    key = _cache_identity(profile, tts_text)
     # 整段合成完再返回：引擎失败时能回明确的 502/500，而不是被浏览器吞成空 200（"Load failed"）。
     try:
-        data = await _synth_and_cache(key, tts_text)
+        data = await _synth_and_cache(key, normalized_text, selected_engine)
         return Response(data, media_type="audio/wav")
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
+    except BailianSynthesisError as e:
+        raise HTTPException(status_code=502, detail=f"engine failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"tts failed: {e}")
 
 
 @app.post("/api/contracts/{contract_id}/segments/{seg_idx}/preload")
 async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTasks):
-    idx = _load_idx_or_404(contract_id, seg_idx)
-    tts_text = normalize_for_tts(idx.segments[seg_idx].text)
-    key = cache_key(tts_text, ENGINE_NAME)
+    idx, profile = _load_idx_or_404(contract_id, seg_idx)
+    input_text = idx.segments[seg_idx].text
+    normalized_text = profile.normalizer(input_text)
+    selected_engine = _engine_for(profile)
+    tts_text = _prepare_engine_text(selected_engine, normalized_text)
+    key = _cache_identity(profile, tts_text)
     if cache.has(key):
         return {"status": "cached", "seg_idx": seg_idx}
 
     async def _bg():
         try:
-            await _synth_and_cache(key, tts_text)
+            await _synth_and_cache(key, normalized_text, selected_engine)
         except Exception as e:
             print(f"[preload seg {seg_idx}] failed: {e}", flush=True)
 
@@ -231,3 +511,14 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
 # frontend/ 是上传 demo；守卫一下，frontend 缺失时 import app（测试）也不崩
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
+
+def main() -> None:
+    """Run the combined API and static frontend directly from an IDE."""
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()
