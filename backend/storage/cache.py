@@ -1,8 +1,9 @@
 """Content-addressed segment cache. Key = hash(template_id + segment_text + profile + version).
 Identical text (static boilerplate) reuses one file across contracts automatically.
-The engine is part of the key so switching CONTRACT_TTS_ENGINE can't serve stale audio
-from the other engine (ADR-0006). Voice is a fixed internal attribute of each engine,
-not a key dimension — changing it won't invalidate cache, see ADR-0006. Eviction is a
+The selected profile engine is part of the key, so per-language engine switches
+cannot serve stale audio from the other engine (ADR-0006). Voice is a fixed internal
+attribute of each engine, not a key dimension — changing it won't invalidate cache,
+see ADR-0006. Eviction is a
 sliding window: entries not hit within audio_ttl_days are removed, and every hit
 refreshes last_access_at (ADR-0004)."""
 from __future__ import annotations

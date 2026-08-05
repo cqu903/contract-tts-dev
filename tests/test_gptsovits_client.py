@@ -51,3 +51,33 @@ def test_synth_buffers_engine_error_body_before_raising():
     assert exc_info.value.response.json() == {
         "message": "reference audio not found"
     }
+
+
+def test_mandarin_synth_converts_script_and_keeps_reference_language_separate():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, content=b"MANDARIN")
+
+    client = GPTSoVITSClient(
+        "http://127.0.0.1:9880",
+        ref_audio_path="/cantonese.wav",
+        prompt_text="尋日我同阿媽去咗街市。",
+        text_lang="zh",
+        prompt_lang="yue",
+    )
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in client.synth(
+                "貸款人應於三十日內還款。",
+                transport=httpx.MockTransport(handler),
+            )
+        ]
+
+    assert b"".join(asyncio.run(collect())) == b"MANDARIN"
+    assert captured["payload"]["text"] == "贷款人应于三十日内还款。"
+    assert captured["payload"]["text_lang"] == "zh"
+    assert captured["payload"]["prompt_lang"] == "yue"

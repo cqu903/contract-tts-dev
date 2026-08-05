@@ -1,3 +1,4 @@
+const INITIAL_SEGMENT_REQUEST_COUNT = 3;
 const PRELOAD_AHEAD = 3;
 
 const bar = document.getElementById("bar");
@@ -19,6 +20,7 @@ let contractId = null;
 let segs = [];        // [{seg_idx, est_dur_s, cumulative_start_s}]
 let totalEst = 0;
 let current = 0;
+const requestedPreloadKeys = new Set();
 
 function updateTemplateHint() {
   templateHint.textContent = TEMPLATE_HINTS[templateInput.value];
@@ -46,6 +48,30 @@ async function loadSegment(segIdx) {
   return await r.blob();
 }
 
+function preloadSegment(segIdx) {
+  if (!contractId || segIdx < 0 || segIdx >= segs.length) return;
+
+  const targetContractId = contractId;
+  const requestKey = `${targetContractId}:${segIdx}`;
+  if (requestedPreloadKeys.has(requestKey)) return;
+  requestedPreloadKeys.add(requestKey);
+
+  fetch(`/api/contracts/${targetContractId}/segments/${segIdx}/preload`, {
+    method: "POST",
+  }).then((r) => {
+    if (!r.ok) throw new Error(`preload segment ${segIdx} failed: ${r.status}`);
+  }).catch((e) => {
+    requestedPreloadKeys.delete(requestKey);
+    console.warn(e.message);
+  });
+}
+
+function preloadAhead(segIdx, count = PRELOAD_AHEAD) {
+  for (let k = 1; k <= count; k++) {
+    preloadSegment(segIdx + k);
+  }
+}
+
 async function playFrom(segIdx) {
   current = segIdx;
   statusEl.textContent = `生成/載入 第 ${segIdx + 1}/${segs.length} 段…`;
@@ -56,10 +82,7 @@ async function playFrom(segIdx) {
     bar.value = secondsToBar(segs[segIdx].cumulative_start_s);
     await audio.play();
     statusEl.textContent = `播放 第 ${segIdx + 1}/${segs.length} 段`;
-    for (let k = 1; k <= PRELOAD_AHEAD; k++) {
-      const n = segIdx + k;
-      if (n < segs.length) fetch(`/api/contracts/${contractId}/segments/${n}/preload`, { method: "POST" });
-    }
+    preloadAhead(segIdx);
   } catch (e) {
     statusEl.textContent = "錯誤:" + e.message;
   }
@@ -103,14 +126,23 @@ uploadBtn.addEventListener("click", async () => {
     totalEst = data.total_est_s;
     bar.disabled = false;
     current = 0;
-    // preload seg 0 (also server-warmed) so the native play button works immediately
+    requestedPreloadKeys.clear();
+    // Request segment 0 plus the next two segments immediately. Only segment 0
+    // blocks readiness; the following requests warm the playback buffer in parallel.
     try {
-      const blob = await loadSegment(0);
+      const firstSegment = loadSegment(0);
+      preloadAhead(0, INITIAL_SEGMENT_REQUEST_COUNT - 1);
+      const blob = await firstSegment;
       audio.src = URL.createObjectURL(blob);
       clauseEl.textContent = `第 1/${segs.length} 段`;
       bar.value = 0;
+      const initialRequestCount = Math.min(
+        INITIAL_SEGMENT_REQUEST_COUNT,
+        segs.length,
+      );
       statusEl.textContent = templateId + " · 就緒 · 共 " + segs.length
-        + " 段 · 預估 " + totalEst.toFixed(0) + "s(已預載第 1 段,按播放即可)";
+        + " 段 · 預估 " + totalEst.toFixed(0) + "s(已開始預載前 "
+        + initialRequestCount + " 段,按播放即可)";
     } catch (e) {
       statusEl.textContent = `就緒 · 預載第 1 段失敗:${e.message}(可拖動進度條開始)`;
     }

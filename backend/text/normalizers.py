@@ -13,6 +13,8 @@ from .english_runs import is_spoken_english_run, normalize_english_run
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ENGLISH_RUN_PUA_BASE = 0xE000
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+_CJK_CHARACTER = r"\u3400-\u9fff\uf900-\ufaff"
+_SLASH_VARIANTS = r"/／∕"
 
 
 def _roman_to_int(raw: str) -> int | None:
@@ -51,6 +53,22 @@ def _spoken_marker_token(raw: str) -> str:
     if raw.isdigit():
         return _int_to_words(int(raw))
     return " ".join(raw.upper())
+
+
+def _normalize_mandarin_cjk_slashes(text: str) -> str:
+    """Speak legal alternatives without exposing slash glyphs to the engine.
+
+    Numeric dates, floors, identifiers, and ASCII runs are handled by their
+    semantic rules elsewhere. This deliberately targets only CJK-to-CJK
+    separators, so URLs and English addresses retain their own parsing.
+    """
+    text = re.sub(rf"及\s*[{_SLASH_VARIANTS}]\s*或", "及或", text)
+    return re.sub(
+        rf"(?<=[{_CJK_CHARACTER}])\s*[{_SLASH_VARIANTS}]\s*"
+        rf"(?=[{_CJK_CHARACTER}])",
+        "或",
+        text,
+    )
 
 
 def normalize_for_tts_zh(text: str) -> str:
@@ -92,6 +110,7 @@ def normalize_for_tts_zh(text: str) -> str:
         day_month_year_date,
         text,
     )
+    text = _normalize_mandarin_cjk_slashes(text)
 
     # Explicit Roman context is unambiguous. Parenthesized structural markers
     # are read literally so (i) remains correct whether it is Roman or alphabetic.

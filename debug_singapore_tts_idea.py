@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 WS_URL = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference"
 WORKSPACE_ID: str | None = None
 MODEL = "cosyvoice-v3-flash"
-VOICE = "longanyang"
+VOICE = "longanyun_v3"
 TEXT = "Hello, this is a Singapore TTS endpoint test."
 OUTPUT_FILE = "uploaded/diagnostics/bailian_singapore_idea_debug.wav"
 # ================================================================

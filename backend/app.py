@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 # Allow `python backend/app.py` and IDE "Run app.py" in addition to module import.
@@ -42,6 +43,7 @@ from backend.engines.bailian_cosyvoice_client import (
 from backend.templates import (
     TemplateProfile,
     build_template_registry,
+    canonical_engine_name,
     canonical_template_id,
 )
 
@@ -85,11 +87,93 @@ REF_PROMPT = (
     else ""
 )
 
-# --- 引擎选择 ---
-# 两个 client 都实现 synth(text) -> AsyncIterator[bytes]；归一化留在 app 层（共用
-# normalizer.py），换引擎无需改动别处。
-# CONTRACT_TTS_ENGINE = "gptsovits"（本地，默认）| "bailian"（云端 cosyvoice）。
-ENGINE_NAME = os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
+
+@dataclass(frozen=True)
+class _GPTSoVITSReferenceProfile:
+    """Reference voice configuration, independent from the target language."""
+
+    ref_audio_path: str
+    prompt_text: str
+    prompt_lang: str
+
+
+def _reference_profile_from_env(
+    language: str,
+    fallback: _GPTSoVITSReferenceProfile,
+) -> _GPTSoVITSReferenceProfile:
+    """Load an optional native-language reference, otherwise cross-language fallback."""
+    suffix = language.upper()
+    audio_name = f"GPTSOVITS_REF_AUDIO_{suffix}"
+    engine_audio_name = f"GPTSOVITS_REF_AUDIO_ENGINE_PATH_{suffix}"
+    prompt_name = f"GPTSOVITS_REF_PROMPT_{suffix}"
+    prompt_lang_name = f"GPTSOVITS_REF_PROMPT_LANG_{suffix}"
+
+    audio_override = os.getenv(audio_name, "").strip()
+    engine_audio_override = os.getenv(engine_audio_name, "").strip()
+    prompt_override = os.getenv(prompt_name, "").strip()
+    prompt_lang_override = os.getenv(prompt_lang_name, "").strip().lower()
+    has_language_reference = bool(
+        audio_override or engine_audio_override or prompt_override
+    )
+
+    if engine_audio_override:
+        ref_audio_path = engine_audio_override
+    elif audio_override:
+        ref_audio_path = str(_project_path_from_env(audio_name, audio_override))
+    else:
+        ref_audio_path = fallback.ref_audio_path
+
+    if prompt_override:
+        prompt_path = _project_path_from_env(prompt_name, prompt_override)
+        prompt_text = (
+            prompt_path.read_text(encoding="utf-8").strip()
+            if prompt_path.exists()
+            else ""
+        )
+    else:
+        prompt_text = fallback.prompt_text
+
+    prompt_lang = prompt_lang_override or (
+        language if has_language_reference else fallback.prompt_lang
+    )
+    if prompt_lang not in {"zh", "yue", "en"}:
+        raise ValueError(
+            f"{prompt_lang_name} must be one of: zh, yue, en"
+        )
+    return _GPTSoVITSReferenceProfile(
+        ref_audio_path=ref_audio_path,
+        prompt_text=prompt_text,
+        prompt_lang=prompt_lang,
+    )
+
+
+_COMMON_GPTSOVITS_REFERENCE = _GPTSoVITSReferenceProfile(
+    ref_audio_path=REF_AUDIO,
+    prompt_text=REF_PROMPT,
+    prompt_lang=os.getenv("GPTSOVITS_REF_PROMPT_LANG", "yue").strip().lower(),
+)
+_YUE_GPTSOVITS_REFERENCE = _reference_profile_from_env(
+    "yue", _COMMON_GPTSOVITS_REFERENCE
+)
+GPTSOVITS_REFERENCE_PROFILES = {
+    "yue": _YUE_GPTSOVITS_REFERENCE,
+    "zh": _reference_profile_from_env("zh", _YUE_GPTSOVITS_REFERENCE),
+    "en": _reference_profile_from_env("en", _YUE_GPTSOVITS_REFERENCE),
+}
+
+# --- Per-language engine selection ---
+# Both adapters expose synth(text) -> AsyncIterator[bytes]. The language-specific
+# environment variables override the legacy process-wide fallback.
+ENGINE_NAME = canonical_engine_name(
+    os.getenv("CONTRACT_TTS_ENGINE", "gptsovits")
+)
+ENGINE_NAMES = {
+    language: canonical_engine_name(
+        os.getenv(f"CONTRACT_TTS_ENGINE_{language.upper()}", "").strip()
+        or ENGINE_NAME
+    )
+    for language in ("yue", "zh", "en")
+}
 BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
 BAILIAN_HTTP_BASE_URL = os.getenv(
     "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
@@ -104,9 +188,9 @@ BAILIAN_VOICE = os.getenv("BAILIAN_VOICE", "longjiaxin_v3")  # 原生粤语
 BAILIAN_VOICE_ZH = os.getenv("BAILIAN_VOICE_ZH", "longxiaochun")
 BAILIAN_VOICE_EN = os.getenv("BAILIAN_VOICE_EN", "longanyang")
 ENGINE_LANGUAGE_SETTINGS = {
-    "yue": {"voice": BAILIAN_VOICE, "text_lang": "yue", "prompt_lang": "yue"},
-    "zh": {"voice": BAILIAN_VOICE_ZH, "text_lang": "zh", "prompt_lang": "zh"},
-    "en": {"voice": BAILIAN_VOICE_EN, "text_lang": "en", "prompt_lang": "en"},
+    "yue": {"voice": BAILIAN_VOICE, "text_lang": "yue"},
+    "zh": {"voice": BAILIAN_VOICE_ZH, "text_lang": "zh"},
+    "en": {"voice": BAILIAN_VOICE_EN, "text_lang": "en"},
 }
 ENGINE_PROFILE_CACHE_VERSIONS = {
     language: os.getenv(f"ENGINE_PROFILE_CACHE_VERSION_{language.upper()}", "v1")
@@ -115,8 +199,8 @@ ENGINE_PROFILE_CACHE_VERSIONS = {
 
 
 def make_engine(name: str | None = None, reading_language: str = "yue"):
-    """构造 TTS 引擎。name=None -> 读 CONTRACT_TTS_ENGINE 环境变量（默认 gptsovits）。"""
-    name = name or ENGINE_NAME
+    """Construct the configured adapter for one reading-language profile."""
+    name = canonical_engine_name(name or ENGINE_NAMES[reading_language])
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
         return BailianCosyVoiceClient(
@@ -129,12 +213,13 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
             ws_url=BAILIAN_WS_URL,
             workspace=BAILIAN_WORKSPACE_ID,
         )
+    reference = GPTSOVITS_REFERENCE_PROFILES[reading_language]
     return GPTSoVITSClient(
         ENGINE_URL,
-        REF_AUDIO,
-        REF_PROMPT,
+        reference.ref_audio_path,
+        reference.prompt_text,
         text_lang=settings["text_lang"],
-        prompt_lang=settings["prompt_lang"],
+        prompt_lang=reference.prompt_lang,
     )
 
 
@@ -150,14 +235,15 @@ def _has_readable_contract_text(text: str) -> bool:
 
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
-engine = make_engine()
+engine = make_engine(reading_language="yue")
 TEMPLATE_REGISTRY = build_template_registry(
     engine_name=ENGINE_NAME,
+    engine_names=ENGINE_NAMES,
     api_key=os.getenv("DASHSCOPE_API_KEY", ""),
     engine_provider=lambda: engine,
     engine_providers={
-        "zh": lambda: make_engine(ENGINE_NAME, "zh"),
-        "en": lambda: make_engine(ENGINE_NAME, "en"),
+        "zh": lambda: make_engine(reading_language="zh"),
+        "en": lambda: make_engine(reading_language="en"),
     },
     cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
 )
@@ -413,7 +499,7 @@ def main() -> None:
     """Run the combined API and static frontend directly from an IDE."""
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 if __name__ == "__main__":

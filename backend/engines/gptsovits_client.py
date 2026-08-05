@@ -6,6 +6,7 @@ chunk format varies by version and is not bet-the-spike-on-able here."""
 from __future__ import annotations
 from typing import AsyncIterator
 import httpx
+from opencc import OpenCC
 
 
 class GPTSoVITSClient:
@@ -16,14 +17,24 @@ class GPTSoVITSClient:
         self.prompt_text = prompt_text
         self.text_lang = text_lang
         self.prompt_lang = prompt_lang
+        self._text_converter = OpenCC("t2s") if text_lang == "zh" else None
+        self._prompt_converter = OpenCC("t2s") if prompt_lang == "zh" else None
         self.timeout = timeout
+
+    def prepare_text(self, text: str) -> str:
+        """Apply target-language conversion at the engine seam."""
+        return self._text_converter.convert(text) if self._text_converter else text
+
+    def prepare_prompt(self, text: str) -> str:
+        """Prepare the transcript using the reference audio's language."""
+        return self._prompt_converter.convert(text) if self._prompt_converter else text
 
     async def synth(self, text: str, transport: httpx.AsyncBaseTransport | None = None) -> AsyncIterator[bytes]:
         payload = {
-            "text": text,
+            "text": self.prepare_text(text),
             "text_lang": self.text_lang,
             "ref_audio_path": self.ref_audio_path,
-            "prompt_text": self.prompt_text,
+            "prompt_text": self.prepare_prompt(self.prompt_text),
             "prompt_lang": self.prompt_lang,
             "media_type": "wav",
             "streaming_mode": False,

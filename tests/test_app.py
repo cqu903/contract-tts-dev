@@ -112,6 +112,16 @@ def test_frontend_assets_disable_conditional_browser_cache():
     assert second.headers["cache-control"] == "no-store, no-cache, must-revalidate"
 
 
+def test_frontend_initially_requests_three_segments():
+    client = TestClient(appmod.app)
+
+    source = client.get("/app.js").text
+
+    assert "const INITIAL_SEGMENT_REQUEST_COUNT = 3;" in source
+    assert "const firstSegment = loadSegment(0);" in source
+    assert "preloadAhead(0, INITIAL_SEGMENT_REQUEST_COUNT - 1);" in source
+
+
 def test_xcash_alias_and_canonical_template_share_new_contract_id(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     client = TestClient(appmod.app)
@@ -231,6 +241,57 @@ def test_make_engine_passes_bailian_transport_configuration(monkeypatch):
 
 def test_make_engine_defaults_to_gptsovits():
     assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
+
+
+def test_make_engine_builds_cross_lingual_gptsovits_profiles():
+    yue = appmod.make_engine("gptsovits", "yue")
+    zh = appmod.make_engine("gptsovits", "zh")
+    en = appmod.make_engine("gptsovits", "en")
+
+    assert (yue.text_lang, zh.text_lang, en.text_lang) == ("yue", "zh", "en")
+    assert (yue.prompt_lang, zh.prompt_lang, en.prompt_lang) == (
+        "yue",
+        "yue",
+        "yue",
+    )
+    assert zh.ref_audio_path == en.ref_audio_path == yue.ref_audio_path
+    assert zh.prompt_text == en.prompt_text == yue.prompt_text
+
+
+def test_make_engine_uses_language_specific_engine_defaults(monkeypatch):
+    monkeypatch.setattr(
+        appmod,
+        "ENGINE_NAMES",
+        {"yue": "gptsovits", "zh": "bailian", "en": "gptsovits"},
+    )
+
+    assert isinstance(appmod.make_engine(reading_language="yue"), GPTSoVITSClient)
+    assert isinstance(
+        appmod.make_engine(reading_language="zh"), BailianCosyVoiceClient
+    )
+    assert isinstance(appmod.make_engine(reading_language="en"), GPTSoVITSClient)
+    assert isinstance(appmod.make_engine("cosyvoice", "en"), BailianCosyVoiceClient)
+
+
+def test_language_specific_gptsovits_reference_overrides_cross_lingual_fallback(
+    tmp_path, monkeypatch
+):
+    prompt_path = tmp_path / "mandarin.txt"
+    prompt_path.write_text("這是一段普通話參考文本。", encoding="utf-8")
+    monkeypatch.setenv("GPTSOVITS_REF_AUDIO_ENGINE_PATH_ZH", "/refs/mandarin.wav")
+    monkeypatch.setenv("GPTSOVITS_REF_PROMPT_ZH", str(prompt_path))
+    monkeypatch.delenv("GPTSOVITS_REF_PROMPT_LANG_ZH", raising=False)
+    fallback = appmod._GPTSoVITSReferenceProfile(
+        ref_audio_path="/refs/cantonese.wav",
+        prompt_text="粵語參考文本。",
+        prompt_lang="yue",
+    )
+
+    profile = appmod._reference_profile_from_env("zh", fallback)
+
+    assert profile.ref_audio_path == "/refs/mandarin.wav"
+    assert profile.prompt_text == "這是一段普通話參考文本。"
+    assert profile.prompt_lang == "zh"
 
 
 def test_load_project_env_loads_defaults_without_overriding_environment(tmp_path, monkeypatch):

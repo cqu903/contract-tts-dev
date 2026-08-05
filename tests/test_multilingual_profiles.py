@@ -41,12 +41,53 @@ def test_bailian_registry_exposes_three_available_language_profiles():
     assert registry["xcash_en"].engine_profile.id == "bailian_en"
 
 
-def test_local_engine_only_exposes_cantonese_profile():
+def test_local_engine_exposes_all_three_language_profiles():
     registry = build_template_registry(engine_name="gptsovits")
 
+    assert all(profile.engine_profile.available for profile in registry.values())
+    assert registry["xcash_yue"].engine_profile.id == "gptsovits_yue"
+    assert registry["xcash_zh"].engine_profile.id == "gptsovits_zh"
+    assert registry["xcash_en"].engine_profile.id == "gptsovits_en"
+
+
+def test_registry_selects_engine_and_availability_per_language():
+    registry = build_template_registry(
+        engine_name="gptsovits",
+        engine_names={
+            "yue": "gptsovits",
+            "zh": "cosyvoice",
+            "en": "gptsovits",
+        },
+        api_key="",
+    )
+
+    assert registry["xcash_yue"].engine_profile.id == "gptsovits_yue"
+    assert registry["xcash_zh"].engine_profile.id == "bailian_zh"
+    assert registry["xcash_en"].engine_profile.id == "gptsovits_en"
     assert registry["xcash_yue"].engine_profile.available
     assert not registry["xcash_zh"].engine_profile.available
-    assert not registry["xcash_en"].engine_profile.available
+    assert registry["xcash_en"].engine_profile.available
+
+
+def test_registry_enables_only_configured_cosyvoice_profiles_when_key_exists():
+    registry = build_template_registry(
+        engine_name="bailian",
+        engine_names={"yue": "gptsovits", "zh": "bailian", "en": "cosyvoice"},
+        api_key="sk-test",
+    )
+
+    assert all(profile.engine_profile.available for profile in registry.values())
+    assert registry["xcash_yue"].engine_profile.id == "gptsovits_yue"
+    assert registry["xcash_zh"].engine_profile.id == "bailian_zh"
+    assert registry["xcash_en"].engine_profile.id == "bailian_en"
+
+
+def test_registry_rejects_unknown_engine_names():
+    with pytest.raises(ValueError, match="unsupported TTS engine"):
+        build_template_registry(
+            engine_name="gptsovits",
+            engine_names={"zh": "not-an-engine"},
+        )
 
 
 def test_profiles_have_independently_configurable_cache_versions():
@@ -296,6 +337,22 @@ def test_mandarin_normalizer_handles_general_contract_formats(source, expected):
     assert normalize_for_tts_zh(source) == expected
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "訂立本協議/作出貸款日期：08/06/2026",
+            "訂立本協議或作出貸款日期：二零二六年六月八日",
+        ),
+        ("貸款人及/或代理人", "貸款人及或代理人"),
+        ("本人／吾等", "本人或吾等"),
+        ("本人∕吾等", "本人或吾等"),
+    ],
+)
+def test_mandarin_normalizer_speaks_cjk_slashes_by_context(source, expected):
+    assert normalize_for_tts_zh(source) == expected
+
+
 def test_invalid_numeric_date_is_not_rendered_as_a_mandarin_date():
     assert "年" not in normalize_for_tts_zh("31-02-2026")
 
@@ -375,9 +432,11 @@ def test_english_api_uses_its_profile_and_isolated_contract_id(tmp_path, monkeyp
     assert en_engine.calls == 1
 
 
-def test_local_unconfigured_language_profile_returns_503_without_storage(tmp_path, monkeypatch):
+def test_local_english_profile_uploads_and_uses_selected_engine(tmp_path, monkeypatch):
     monkeypatch.setattr(appmod, "cache", appmod.SegmentCache(tmp_path / "cache"))
     monkeypatch.setattr(appmod, "CONTRACT_STORE", appmod.ContractStore(tmp_path / "uploaded"))
+    engine = FakeEngine()
+    _enable_profile(monkeypatch, "xcash_en", engine)
     client = TestClient(appmod.app)
 
     response = client.post(
@@ -385,8 +444,9 @@ def test_local_unconfigured_language_profile_returns_503_without_storage(tmp_pat
         json={"text": "The borrower shall pay.", "template_id": "xcash_en"},
     )
 
-    assert response.status_code == 503
-    assert list((tmp_path / "uploaded").glob("*.txt")) == []
+    assert response.status_code == 200
+    assert response.json()["template_id"] == "xcash_en"
+    assert engine.calls == 1
 
 
 def test_make_engine_selects_language_specific_cloud_and_local_settings(monkeypatch):
@@ -403,4 +463,5 @@ def test_make_engine_selects_language_specific_cloud_and_local_settings(monkeypa
     assert zh_cloud.text_lang == "zh"
     assert en_cloud.text_lang == "en"
     assert isinstance(zh_local, GPTSoVITSClient)
-    assert zh_local.text_lang == zh_local.prompt_lang == "zh"
+    assert zh_local.text_lang == "zh"
+    assert zh_local.prompt_lang == "yue"

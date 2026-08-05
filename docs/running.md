@@ -7,13 +7,15 @@
 
 | 部件 | 进程 | 端口 | 必需性 |
 |---|---|---|---|
-| TTS 引擎 | 本地 GPT-SoVITS (`api_v2.py`) 或云端 Bailian CosyVoice(无本地进程) | 9880(本地) | 二选一 |
+| TTS 引擎 | 自托管 GPT-SoVITS (`api_v2.py`) 和/或云端 Bailian CosyVoice | 9880（GPT-SoVITS） | 取决于各语言 profile 配置；可同时使用 |
 | 后端 | `uvicorn backend.app:app` | 8000 | 必需 |
 | 上传 demo | 静态页(后端挂载) | 8000 | 可选(调用方可自带前端) |
 | 原文存储 | `uploaded/<contract_id>.txt`(内容寻址,gitignored) | — | 自动 |
 | 音频缓存 | `cache/<sha256>.wav`(内容寻址,gitignored) | — | 自动 |
 
 ## 2. 启动
+
+若三个语言全部使用同一种引擎，只启动下面对应的一套即可；混合配置时需要同时启动 GPT-SoVITS，并为使用 CosyVoice 的 profile 配置百炼 Key。
 
 ### A. 本地 GPT-SoVITS(默认)
 
@@ -25,7 +27,7 @@ cd /path/to/GPT-SoVITS && uv run python api_v2.py   # 监听 :9880
 uv run uvicorn backend.app:app --port 8000
 ```
 
-需要参考音 `refs/cantonese_ref_trim.wav` + 同名转写 txt(7 秒,gitignored)。
+默认使用参考音 `refs/cantonese_ref_trim.wav` + 同名粤语转写 txt（约 7 秒）。粤语直接合成；普通话和英语使用 GPT-SoVITS 跨语言合成。也可为普通话、英语配置各自的原生参考音。
 
 ### B. 云端 Bailian CosyVoice(无需本地引擎/参考音)
 
@@ -93,10 +95,19 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `CONTRACT_TTS_ENGINE` | `gptsovits` | 引擎:`gptsovits`(本地)/ `bailian`(云端)。**切换需重启服务** |
-| `GPTSOVITS_ENGINE_URL` | `http://127.0.0.1:9880` | 本地 GPT-SoVITS 服务地址；指向不同模型时同步提升粤语 profile 缓存版本 |
-| `GPTSOVITS_REF_AUDIO` | `refs/cantonese_ref_trim.wav` | 本地参考音频路径(必须 3–10 秒)；支持项目根目录相对路径或绝对路径 |
-| `GPTSOVITS_REF_PROMPT` | `refs/cantonese_ref_trim.txt` | 本地参考文本路径；支持项目根目录相对路径或绝对路径 |
+| `CONTRACT_TTS_ENGINE` | `gptsovits` | 未单独配置语言时的回退引擎：`gptsovits` / `cosyvoice`（`bailian` 同义）。**切换需重启服务** |
+| `CONTRACT_TTS_ENGINE_YUE` | 回退到 `CONTRACT_TTS_ENGINE` | 粤语 profile 独立引擎：`gptsovits` 或 `cosyvoice`（`bailian` 同义） |
+| `CONTRACT_TTS_ENGINE_ZH` | 回退到 `CONTRACT_TTS_ENGINE` | 普通话 profile 独立引擎 |
+| `CONTRACT_TTS_ENGINE_EN` | 回退到 `CONTRACT_TTS_ENGINE` | 英语 profile 独立引擎 |
+| `GPTSOVITS_ENGINE_URL` | `http://127.0.0.1:9880` | GPT-SoVITS 服务地址；可为同机或远程主机 |
+| `GPTSOVITS_REF_AUDIO` | `refs/cantonese_ref_trim.wav` | 三种语言共用的回退参考音（必须 3–10 秒） |
+| `GPTSOVITS_REF_AUDIO_ENGINE_PATH` | 本地参考音路径 | GPT-SoVITS 在另一主机/容器时，该引擎能访问的参考音路径 |
+| `GPTSOVITS_REF_PROMPT` | `refs/cantonese_ref_trim.txt` | 共用参考音的逐字转写文件 |
+| `GPTSOVITS_REF_PROMPT_LANG` | `yue` | 共用参考音实际使用的语言，不是目标文本语言 |
+| `GPTSOVITS_REF_AUDIO_ZH/EN` | 无 | 可选普通话/英语专属参考音；未配置时回退共用粤语参考音 |
+| `GPTSOVITS_REF_AUDIO_ENGINE_PATH_ZH/EN` | 无 | 专属参考音在远程 GPT-SoVITS 主机上的路径 |
+| `GPTSOVITS_REF_PROMPT_ZH/EN` | 无 | 专属参考音的逐字转写文件 |
+| `GPTSOVITS_REF_PROMPT_LANG_ZH/EN` | `zh/en` | 配置专属参考音时的参考音语言；可显式覆盖 |
 | `DASHSCOPE_API_KEY` | 无 | `bailian` 引擎必需 |
 | `BAILIAN_TRANSPORT` | `http` | 百炼协议：`http` 或 `wss`；新加坡使用 `wss` |
 | `BAILIAN_HTTP_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP SpeechSynthesizer 基础地址 |
@@ -116,9 +127,18 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 |---|---|---|
 | `TEMPLATE_REGISTRY` | `xcash_yue`, `xcash_zh`, `xcash_en` | 接受的 `template_id`; `xcash` 是 `xcash_yue` 别名 |
 
-本地 GPT-SoVITS 第一阶段只提供 `xcash_yue`;在本地模式选择 `xcash_zh` 或
-`xcash_en` 会在上传阶段返回 `503`。云端 Bailian 在配置 API key 后提供三个
-独立 profile。
+本地 GPT-SoVITS 和配置 API key 后的云端 Bailian 都提供三个独立 profile。GPT-SoVITS 的 `xcash_zh` 使用 `text_lang=zh`（中英混合），`xcash_en` 使用 `text_lang=en`；目标语言与参考音的 `prompt_lang` 独立。
+
+三个 profile 可混合选择引擎。例如粤语、英语用 GPT-SoVITS，普通话使用 CosyVoice：
+
+```dotenv
+CONTRACT_TTS_ENGINE=gptsovits
+CONTRACT_TTS_ENGINE_YUE=gptsovits
+CONTRACT_TTS_ENGINE_ZH=cosyvoice
+CONTRACT_TTS_ENGINE_EN=gptsovits
+```
+
+使用 `cosyvoice` 的 profile 必须配置 `DASHSCOPE_API_KEY`；没有 Key 时只禁用对应 profile，其他 GPT-SoVITS profile 仍可使用。切换某个 profile 的引擎后，Engine Profile ID 会变化，缓存会自动隔离，无需清除其他语言缓存。
 
 > 合同由调用方 `POST /api/contracts {text, template_id}` 上传,**不再预注册、无 `?contract=`**。
 
@@ -130,8 +150,8 @@ http://127.0.0.1:8000 —— 粘贴合同 TXT →「上傳並切片」→ 拖进
 
 | 要做什么 | 怎么做 |
 |---|---|
-| 换引擎 | 改 `CONTRACT_TTS_ENGINE` **重启服务**(无需手动清缓存;键含引擎,旧引擎缓存自动失效、由 30 天滑动窗口清理——ADR-0006) |
-| 换本地参考音 | 替换 `refs/cantonese_ref_trim.*` 后提升 `ENGINE_PROFILE_CACHE_VERSION_YUE`，使旧音频不再命中；完整步骤见 `engine-setup.md` §4 |
+| 换引擎 | 改全局或对应语言的 `CONTRACT_TTS_ENGINE_*` 后重启；键含 profile 引擎，旧音频自动不再命中并由 30 天滑动窗口清理 |
+| 换本地参考音 | 替换共用参考音时提升三个 profile 的缓存版本；只换 `ZH/EN` 专属参考音时仅提升对应版本。完整步骤见 `engine-setup.md` §4 |
 | 过期项清理 | **自动**:服务启动清一次 + 后台每 24h 清一次(原文 90d / 音频 30d,ADR-0007);正常无需手动 `rm` |
 | 看某段实际喂引擎的文本 | `python -c "from backend.normalizer import normalize_for_tts; print(normalize_for_tts('<段文本>'))"` |
 | 看切片结果 | 对上传后的 contract_id 调 `contract.dump_segments(build_index(cid, text), path)` |

@@ -91,18 +91,18 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 ## 5. TTS 生成逻辑(`gptsovits_client.py` / `bailian_cosyvoice_client.py` / `app.py`)
 
 - 段文本先经当前 Template 的 normalizer（`normalize_for_tts`、`normalize_for_tts_zh` 或 `normalize_for_tts_en`）→ `tts_text`。
-- `xcash_yue` 的本地 profile 使用 GPT-SoVITS `text_lang="yue"`；普通话/英语 profile 在本地模式不可用。云端 Bailian 为三个 Template 分别绑定 `BAILIAN_VOICE`、`BAILIAN_VOICE_ZH` 和 `BAILIAN_VOICE_EN`。
+- 本地 GPT-SoVITS 为三个 Template 分别使用 `text_lang=yue/zh/en`；目标语言与参考音 `prompt_lang` 分离，普通话和英语默认复用粤语参考音进行跨语言合成，也可配置原生参考音。云端 Bailian 为三个 Template 分别绑定 `BAILIAN_VOICE`、`BAILIAN_VOICE_ZH` 和 `BAILIAN_VOICE_EN`。
 - `engine.synth(tts_text)` 的两个 client 接口统一为异步字节流；本地 GPT-SoVITS 发送语言参数，云端 Bailian 发送 profile voice。引擎返回**整段 WAV**。
 - **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。引擎失败能回明确错误(`httpx.HTTPStatusError → 502`;连接失败/其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
 - **音色一致**:每个 Engine Profile 固定自己的参考音或云端 voice；同一 Template 任意 seek 顺序、缓存命中或新生成都使用同一音色。
-- **引擎可切换**(`app.make_engine`,`CONTRACT_TTS_ENGINE` env):默认 `gptsovits`(本地、仅粤语);`CONTRACT_TTS_ENGINE=bailian` 切云端 CosyVoice。两个 client 的 `synth(text)->AsyncIterator[bytes]` **同构**,§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、Engine Profile ID 和独立 profile cache version；更改协议、地域、voice/model/参数时提升受影响的 `ENGINE_PROFILE_CACHE_VERSION_*`。
+- **引擎按语言切换**：`CONTRACT_TTS_ENGINE` 是兼容回退值，`CONTRACT_TTS_ENGINE_YUE/ZH/EN` 可让每个 Template profile 独立选择 `gptsovits` 或 `cosyvoice`（内部规范化为 `bailian` adapter）。两个 adapter 的 `synth(text)->AsyncIterator[bytes]` **同构**，§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、按语言选出的 Engine Profile ID 和独立 cache version；只切一种语言的引擎会自动进入新的缓存命名空间。
   - 云端 client(`bailian_cosyvoice_client.py`)内部有两个 adapter：`BAILIAN_TRANSPORT=http` 时 POST `SpeechSynthesizer` 取得 audio URL 后下载；`BAILIAN_TRANSPORT=wss` 时通过 DashScope SDK 调用 WebSocket TTS，并在线程中执行同步 SDK 以免阻塞事件循环。`DASHSCOPE_API_KEY` 必须设置；端点、模型、音色与 Key 必须属于同一地域。云端引擎**不需参考音**。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构。
 
 ## 6. 文本归一化(关键一层,`normalizer.py` / `normalizers.py`,依赖 `cn2an`)
 
 Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_yue` 规则；
-`xcash_zh` 的 normalizer 按语义处理经过真实日期/时间校验的多格式日期、币种金额、百分比、楼层、结构标记和逐位编号；连续英文姓名、公司名和地址会先受保护并做英文 L2 清洗（如 `FLT→Flat`、`15/F→15th Floor`、全大写地名转词形），避免普通话数字规则改写地址或 TTS 逐字母拼读。繁体转简体由普通话百炼 TTS 引擎适配层在远程请求前最后一步完成，不改动上传原文和页面显示文本；
+`xcash_zh` 的 normalizer 按语义处理经过真实日期/时间校验的多格式日期、币种金额、百分比、楼层、结构标记和逐位编号；连续英文姓名、公司名和地址会先受保护并做英文 L2 清洗（如 `FLT→Flat`、`15/F→15th Floor`、全大写地名转词形），避免普通话数字规则改写地址或 TTS 逐字母拼读。繁体转简体由普通话引擎 adapter 在请求前最后一步完成，不改动上传原文和页面显示文本；
 `xcash_en` 保留英文词汇和专有名词，复用上述地址缩写与大小写清洗，并展开 ISO/港式/英文月份日期、24 小时时间、金额与分币、百分比、单位、楼层、结构标记及逐位编号。英普切分器会把 PDF/Word 提取后独占一行的 `(a)`、`(ii)` 等标记与下一段正文合并，避免生成无意义的短音频。
 
 显示文本保持原始(给客户看);只改喂给 TTS 的文本。核心是**按语言分流**:
@@ -146,7 +146,7 @@ Registry 为三个 Template 绑定独立 normalizer。下表描述原有 `xcash_
 | `backend/text/cn_numbers.py` | 粤语与普通话 normalizer 共用的中文数字逐位/基数转换 |
 | `backend/storage/contract.py` | `compute_contract_id(text, template_id)`、`ContractStore`(原文磁盘存储 + 90d TTL)、`build_index`、`SegmentIndex/SegmentMeta`、`position_to_segment`、`dump_segments` |
 | `backend/storage/cache.py` | `cache_key(template_id, text, engine_profile_id, cache_version)`、`SegmentCache`(has/get/put + manifest + `evict_expired`) |
-| `backend/engines/gptsovits_client.py` | `GPTSoVITSClient.synth`(httpx → 引擎 `/tts`,`text_lang` 按 profile 设置,`trust_env=False`);本地第一阶段仅粤语 |
+| `backend/engines/gptsovits_client.py` | `GPTSoVITSClient.synth`（httpx → 引擎 `/tts`，`text_lang` 按目标语言设置，`prompt_lang` 按参考音设置，普通话请求前转简体，`trust_env=False`） |
 | `backend/engines/bailian_cosyvoice_client.py` | `BailianCosyVoiceClient.synth`(两步 POST+GET,`trust_env=False`);云端按 Template 绑定对应 voice |
 | `backend/{normalizer,normalizers,segmenter,segmenters,cn_numbers,contract,cache,...}.py` | 旧 import 路径的兼容导出，不放业务实现 |
 | `backend/app.py` | FastAPI:`POST /api/contracts`、`GET /api/contracts/{id}`、`.../segments/{n}`、`.../preload`、静态 `/`; Template Registry 与 profile 选择;`_synth_and_cache`/`_load_idx_or_404`;`run_cleanup`/`_periodic_cleanup`(启动 + 每 24h 定期清理,ADR-0007) |

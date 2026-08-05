@@ -49,3 +49,17 @@ uv run python -c "from backend.normalizer import normalize_for_tts; print(normal
 - 测试对 `app.py` 用 FastAPI `TestClient`，靠 `monkeypatch.setattr(appmod, "engine" / "cache" / "CONTRACT_STORE")` 注入依赖（见 `tests/test_app.py`），HTTP client 已 mock —— 不需要真引擎。
 - 当引擎读错某个字（多音字、问题 token）时，**在 `normalizer.py` 里修**（同音字替换 / token 改写 —— 已有 `還→環`、`注：→注，` 先例），**绝不改合同原文**。
 - 深层设计上下文在 `docs/adr/`（ADR-0001..0007）与 `CONTEXT.md`（领域语言）；`docs/architecture.md` 是 as-built，可能滞后于最新代码——以代码为准。
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as local Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
