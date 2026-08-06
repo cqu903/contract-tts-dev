@@ -87,7 +87,7 @@ def build_template_registry(*, engine_name: str, api_key: str = "",
         return (
             selected == "gptsovits"
             or (selected == "bailian" and bool(api_key))
-            or (selected == "microsoft" and language == "yue")
+            or selected == "microsoft"
         )
 
     yue_provider = engine_provider or providers.get("yue") or (lambda: None)

@@ -180,10 +180,36 @@ ENGINE_NAMES = {
     for language in ("yue", "zh", "en")
 }
 MICROSOFT_TTS_DRIVER = os.getenv("MICROSOFT_TTS_DRIVER", "").strip()
-MICROSOFT_TTS_VOICE_YUE = os.getenv(
-    "MICROSOFT_TTS_VOICE_YUE", "zh-HK-WanLungNeural"
-).strip()
-MICROSOFT_TTS_RATE_YUE = os.getenv("MICROSOFT_TTS_RATE_YUE", "+0%").strip()
+
+
+@dataclass(frozen=True)
+class MicrosoftReadingLanguageConfig:
+    """Server-side Microsoft voice and base rate for one Reading Language."""
+
+    voice: str
+    rate: str
+
+
+MICROSOFT_TTS_LANGUAGE_CONFIGS = {
+    "yue": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_YUE", "zh-HK-WanLungNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_YUE", "+0%").strip(),
+    ),
+    "zh": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_ZH", "zh-CN-YunyangNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_ZH", "+0%").strip(),
+    ),
+    "en": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_EN", "en-HK-SamNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_EN", "+0%").strip(),
+    ),
+}
 BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
 BAILIAN_HTTP_BASE_URL = os.getenv(
     "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
@@ -227,14 +253,11 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
     """Construct the configured adapter for one reading-language profile."""
     name = canonical_engine_name(name or ENGINE_NAMES[reading_language])
     if name == "microsoft":
-        if reading_language != "yue":
-            raise ValueError(
-                "Microsoft TTS supports only the yue profile in this release"
-            )
+        settings = MICROSOFT_TTS_LANGUAGE_CONFIGS[reading_language]
         return build_microsoft_provider(
             driver_name=MICROSOFT_TTS_DRIVER,
-            voice=MICROSOFT_TTS_VOICE_YUE,
-            rate=MICROSOFT_TTS_RATE_YUE,
+            voice=settings.voice,
+            rate=settings.rate,
         )
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
@@ -261,6 +284,17 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
     )
 
 
+def build_configured_engines(
+    engine_names: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Construct one locally validated engine binding per Reading Language."""
+    selected = engine_names or ENGINE_NAMES
+    return {
+        language: make_engine(selected[language], language)
+        for language in ("yue", "zh", "en")
+    }
+
+
 class ContractUpload(BaseModel):
     text: str
     template_id: str
@@ -273,19 +307,26 @@ def _has_readable_contract_text(text: str) -> bool:
 
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
-engine = make_engine(reading_language="yue")
+CONFIGURED_ENGINES = build_configured_engines()
+# Compatibility alias used by existing Cantonese tests and local integrations.
+engine = CONFIGURED_ENGINES["yue"]
 TEMPLATE_REGISTRY = build_template_registry(
     engine_name=ENGINE_NAME,
     engine_names=ENGINE_NAMES,
     api_key=os.getenv("DASHSCOPE_API_KEY", ""),
     engine_provider=lambda: engine,
     engine_providers={
-        "zh": lambda: make_engine(reading_language="zh"),
-        "en": lambda: make_engine(reading_language="en"),
+        "zh": lambda: CONFIGURED_ENGINES["zh"],
+        "en": lambda: CONFIGURED_ENGINES["en"],
     },
     cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
     synthesis_fingerprints={
-        "yue": getattr(engine, "synthesis_fingerprint", "audio-artifact-v1"),
+        language: getattr(
+            CONFIGURED_ENGINES[language],
+            "synthesis_fingerprint",
+            "audio-artifact-v1",
+        )
+        for language in ("yue", "zh", "en")
     },
 )
 

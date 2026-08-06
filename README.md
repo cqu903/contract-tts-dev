@@ -24,7 +24,7 @@
 DASHSCOPE_API_KEY=sk-... CONTRACT_TTS_ENGINE=bailian uv run uvicorn backend.app:app --port 8000
 ```
 
-### C. Microsoft Provider / Edge Driver（粤语）
+### C. Microsoft Provider / Edge Driver
 
 在 `.env` 中设置：
 
@@ -33,7 +33,13 @@ CONTRACT_TTS_ENGINE_YUE=microsoft
 MICROSOFT_TTS_DRIVER=edge
 MICROSOFT_TTS_VOICE_YUE=zh-HK-WanLungNeural
 MICROSOFT_TTS_RATE_YUE=+0%
+MICROSOFT_TTS_VOICE_ZH=zh-CN-YunyangNeural
+MICROSOFT_TTS_RATE_ZH=+0%
+MICROSOFT_TTS_VOICE_EN=en-HK-SamNeural
+MICROSOFT_TTS_RATE_EN=+0%
 ```
+
+将 `CONTRACT_TTS_ENGINE` 设为 `microsoft` 可供三种语言全局使用，也可以只设置 `CONTRACT_TTS_ENGINE_YUE`、`_ZH` 或 `_EN` 与其它 Provider 混合部署。
 
 启用 Edge Driver 会把归一化后的合同 Segment（可能包含 PII）发送到 Edge 在线服务；当前 Driver 没有本项目专属 API key、租户或地域保证。它不自动回退到其他引擎，未缓存段的上游失败返回 `502`。
 

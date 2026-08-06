@@ -15,6 +15,8 @@ from backend.engines.microsoft_tts import (
     build_microsoft_provider,
     normalize_edge_rate,
 )
+from backend.templates import build_template_registry
+from tests.test_app import FakeEngine
 
 
 async def _collect(stream):
@@ -36,10 +38,17 @@ class FakeCommunicate:
 class FakeMicrosoftDriver:
     audio_format = AudioFormat.MP3
 
-    def __init__(self, fingerprint="fake-edge-v1", error=None, partial=False):
+    def __init__(
+        self,
+        fingerprint="fake-edge-v1",
+        error=None,
+        partial=False,
+        audio_prefix="native-mp3",
+    ):
         self.synthesis_fingerprint = fingerprint
         self.error = error
         self.partial = partial
+        self.audio_prefix = audio_prefix
         self.calls = 0
         self.texts = []
 
@@ -50,7 +59,7 @@ class FakeMicrosoftDriver:
             yield b"partial-mp3"
         if self.error is not None:
             raise self.error
-        yield f"native-mp3:{text}".encode()
+        yield f"{self.audio_prefix}:{text}".encode()
 
 
 class EmptyMicrosoftDriver(FakeMicrosoftDriver):
@@ -80,6 +89,38 @@ def _select_microsoft_yue(tmp_path, monkeypatch, driver):
     )
     monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", selected)
     return provider
+
+
+def _install_profile_matrix(
+    tmp_path,
+    monkeypatch,
+    *,
+    engine_names,
+    engines,
+    api_key="",
+):
+    monkeypatch.setattr(appmod, "cache", SegmentCache(tmp_path / "cache"))
+    monkeypatch.setattr(
+        appmod, "CONTRACT_STORE", ContractStore(tmp_path / "uploaded")
+    )
+    providers = {
+        language: (lambda language=language: engines[language])
+        for language in ("yue", "zh", "en")
+    }
+    registry = build_template_registry(
+        engine_name=engine_names["yue"],
+        engine_names=engine_names,
+        api_key=api_key,
+        engine_provider=providers["yue"],
+        engine_providers=providers,
+        synthesis_fingerprints={
+            language: getattr(
+                engines[language], "synthesis_fingerprint", "audio-artifact-v1"
+            )
+            for language in ("yue", "zh", "en")
+        },
+    )
+    monkeypatch.setattr(appmod, "TEMPLATE_REGISTRY", registry)
 
 
 def _upload_yue(client, text="第一段。第二段。"):  # two segments for cold-GET tests
@@ -220,6 +261,32 @@ def test_edge_fingerprint_covers_driver_voice_rate_format_and_adapter():
     assert '"rate":"+0%"' in driver.synthesis_fingerprint
     assert '"format":"mp3"' in driver.synthesis_fingerprint
     assert '"adapter":"microsoft-edge-v' in driver.synthesis_fingerprint
+
+
+def test_microsoft_provider_contract_accepts_replaceable_edge_and_azure_drivers():
+    edge = FakeMicrosoftDriver(
+        fingerprint="edge|voice=test|rate=+0%|mp3|v1",
+        audio_prefix="edge-audio",
+    )
+    azure = FakeMicrosoftDriver(
+        fingerprint="azure|voice=test|rate=+0%|mp3|v1",
+        audio_prefix="azure-audio",
+    )
+
+    edge_provider = MicrosoftTTSProvider(edge)
+    azure_provider = MicrosoftTTSProvider(azure)
+
+    assert asyncio.run(_collect(edge_provider.synth("contract"))) == (
+        b"edge-audio:contract"
+    )
+    assert asyncio.run(_collect(azure_provider.synth("contract"))) == (
+        b"azure-audio:contract"
+    )
+    assert edge_provider.audio_format is azure_provider.audio_format
+    assert (
+        edge_provider.synthesis_fingerprint
+        != azure_provider.synthesis_fingerprint
+    )
 
 
 def test_cantonese_microsoft_profile_returns_native_mp3_and_reuses_warm_cache(
@@ -406,3 +473,272 @@ def test_microsoft_rate_does_not_change_contract_timing_or_request_schema(
     assert changed["total_est_s"] == baseline["total_est_s"]
     assert changed["segments"] == baseline["segments"]
     assert {"provider", "driver", "voice", "rate"}.isdisjoint(changed)
+
+
+def test_global_microsoft_serves_native_mp3_for_all_language_templates(
+    tmp_path, monkeypatch
+):
+    drivers = {
+        "yue": FakeMicrosoftDriver(
+            fingerprint="edge|yue|v1", audio_prefix="yue-mp3"
+        ),
+        "zh": FakeMicrosoftDriver(
+            fingerprint="edge|zh|v1", audio_prefix="zh-mp3"
+        ),
+        "en": FakeMicrosoftDriver(
+            fingerprint="edge|en|v1", audio_prefix="en-mp3"
+        ),
+    }
+    engines = {
+        language: MicrosoftTTSProvider(driver)
+        for language, driver in drivers.items()
+    }
+    _install_profile_matrix(
+        tmp_path,
+        monkeypatch,
+        engine_names={language: "microsoft" for language in drivers},
+        engines=engines,
+    )
+    client = TestClient(appmod.app)
+
+    requests = {
+        "yue": ("xcash_yue", "粵語合同內容。"),
+        "zh": ("xcash_zh", "普通话合同内容。"),
+        "en": ("xcash_en", "The borrower shall pay."),
+    }
+    for language, (template_id, text) in requests.items():
+        upload = client.post(
+            "/api/contracts",
+            json={"text": text, "template_id": template_id},
+        )
+        assert upload.status_code == 200
+        response = client.get(
+            f"/api/contracts/{upload.json()['contract_id']}/segments/0"
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/mpeg"
+        assert response.content.startswith(f"{language}-mp3:".encode())
+        assert drivers[language].calls == 1
+
+
+def test_language_profiles_can_mix_microsoft_gptsovits_and_cosyvoice(
+    tmp_path, monkeypatch
+):
+    microsoft_driver = FakeMicrosoftDriver(audio_prefix="microsoft-yue")
+    microsoft = MicrosoftTTSProvider(microsoft_driver)
+    gptsovits = FakeEngine(AudioFormat.WAV)
+    cosyvoice = FakeEngine(AudioFormat.WAV)
+    _install_profile_matrix(
+        tmp_path,
+        monkeypatch,
+        engine_names={
+            "yue": "microsoft",
+            "zh": "gptsovits",
+            "en": "cosyvoice",
+        },
+        engines={"yue": microsoft, "zh": gptsovits, "en": cosyvoice},
+        api_key="sk-test",
+    )
+    client = TestClient(appmod.app)
+
+    matrix = [
+        ("xcash_yue", "粵語合同。", "audio/mpeg"),
+        ("xcash_zh", "普通话合同。", "audio/wav"),
+        ("xcash_en", "English contract.", "audio/wav"),
+    ]
+    for template_id, text, media_type in matrix:
+        upload = client.post(
+            "/api/contracts",
+            json={"text": text, "template_id": template_id},
+        )
+        assert upload.status_code == 200
+        response = client.get(
+            f"/api/contracts/{upload.json()['contract_id']}/segments/0"
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == media_type
+
+    assert microsoft_driver.calls == 1
+    assert gptsovits.calls == 1
+    assert cosyvoice.calls == 1
+
+
+def test_changing_one_language_fingerprint_preserves_other_language_caches(
+    tmp_path, monkeypatch
+):
+    drivers = {
+        language: FakeMicrosoftDriver(
+            fingerprint=f"edge|{language}|v1", audio_prefix=f"{language}-v1"
+        )
+        for language in ("yue", "zh", "en")
+    }
+    engines = {
+        language: MicrosoftTTSProvider(driver)
+        for language, driver in drivers.items()
+    }
+    _install_profile_matrix(
+        tmp_path,
+        monkeypatch,
+        engine_names={language: "microsoft" for language in drivers},
+        engines=engines,
+    )
+    client = TestClient(appmod.app)
+    uploads = {}
+    for language, template_id, text in [
+        ("yue", "xcash_yue", "共同条款。"),
+        ("zh", "xcash_zh", "共同条款。"),
+        ("en", "xcash_en", "Common term."),
+    ]:
+        response = client.post(
+            "/api/contracts",
+            json={"text": text, "template_id": template_id},
+        )
+        assert response.status_code == 200
+        uploads[language] = response.json()["contract_id"]
+    baseline_calls = {
+        language: driver.calls for language, driver in drivers.items()
+    }
+
+    replacement_driver = FakeMicrosoftDriver(
+        fingerprint="edge|zh|v2", audio_prefix="zh-v2"
+    )
+    replacement = MicrosoftTTSProvider(replacement_driver)
+    zh_profile = appmod.TEMPLATE_REGISTRY["xcash_zh"]
+    monkeypatch.setitem(
+        appmod.TEMPLATE_REGISTRY,
+        "xcash_zh",
+        replace(
+            zh_profile,
+            engine_profile=replace(
+                zh_profile.engine_profile,
+                synthesis_fingerprint=replacement.synthesis_fingerprint,
+                engine_provider=lambda: replacement,
+            ),
+        ),
+    )
+
+    responses = {
+        language: client.get(f"/api/contracts/{cid}/segments/0")
+        for language, cid in uploads.items()
+    }
+
+    assert all(response.status_code == 200 for response in responses.values())
+    assert responses["zh"].content.startswith(b"zh-v2:")
+    assert replacement_driver.calls == 1
+    assert drivers["yue"].calls == baseline_calls["yue"]
+    assert drivers["zh"].calls == baseline_calls["zh"]
+    assert drivers["en"].calls == baseline_calls["en"]
+
+
+def test_microsoft_failure_is_isolated_to_the_selected_language(
+    tmp_path, monkeypatch
+):
+    yue_driver = FakeMicrosoftDriver(audio_prefix="yue-ok")
+    zh_driver = FakeMicrosoftDriver(error=TimeoutError("zh edge unavailable"))
+    en_driver = FakeMicrosoftDriver(audio_prefix="en-ok")
+    engines = {
+        "yue": MicrosoftTTSProvider(yue_driver),
+        "zh": MicrosoftTTSProvider(zh_driver),
+        "en": MicrosoftTTSProvider(en_driver),
+    }
+    _install_profile_matrix(
+        tmp_path,
+        monkeypatch,
+        engine_names={language: "microsoft" for language in engines},
+        engines=engines,
+    )
+    client = TestClient(appmod.app)
+
+    yue_upload = client.post(
+        "/api/contracts",
+        json={"text": "粤语正常。", "template_id": "xcash_yue"},
+    )
+    zh_upload = client.post(
+        "/api/contracts",
+        json={"text": "普通话失败。", "template_id": "xcash_zh"},
+    )
+    en_upload = client.post(
+        "/api/contracts",
+        json={"text": "English works.", "template_id": "xcash_en"},
+    )
+
+    assert yue_upload.status_code == 200
+    assert zh_upload.status_code == 200
+    assert en_upload.status_code == 200
+    assert client.get(
+        f"/api/contracts/{yue_upload.json()['contract_id']}/segments/0"
+    ).status_code == 200
+    assert client.get(
+        f"/api/contracts/{zh_upload.json()['contract_id']}/segments/0"
+    ).status_code == 502
+    assert client.get(
+        f"/api/contracts/{en_upload.json()['contract_id']}/segments/0"
+    ).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("language", "template_id", "text", "voice"),
+    [
+        ("zh", "xcash_zh", "第一条。第二条。", "zh-CN-YunyangNeural"),
+        ("en", "xcash_en", "First term. Second term.", "en-HK-SamNeural"),
+    ],
+)
+def test_microsoft_rate_does_not_change_mandarin_or_english_timing(
+    tmp_path, monkeypatch, language, template_id, text, voice
+):
+    def communication(*args, **kwargs):
+        return FakeCommunicate([{"type": "audio", "data": b"mp3"}])
+    baseline_driver = EdgeTTSDriver(
+        voice=voice,
+        rate="+0%",
+        communicate_factory=communication,
+    )
+    engines = {
+        "yue": FakeEngine(AudioFormat.WAV),
+        "zh": FakeEngine(AudioFormat.WAV),
+        "en": FakeEngine(AudioFormat.WAV),
+    }
+    engines[language] = MicrosoftTTSProvider(baseline_driver)
+    engine_names = {"yue": "gptsovits", "zh": "gptsovits", "en": "gptsovits"}
+    engine_names[language] = "microsoft"
+    _install_profile_matrix(
+        tmp_path,
+        monkeypatch,
+        engine_names=engine_names,
+        engines=engines,
+    )
+    client = TestClient(appmod.app)
+    baseline = client.post(
+        "/api/contracts",
+        json={"text": text, "template_id": template_id},
+    ).json()
+
+    faster = MicrosoftTTSProvider(
+        EdgeTTSDriver(
+            voice=voice,
+            rate="+30%",
+            communicate_factory=communication,
+        )
+    )
+    profile = appmod.TEMPLATE_REGISTRY[template_id]
+    monkeypatch.setitem(
+        appmod.TEMPLATE_REGISTRY,
+        template_id,
+        replace(
+            profile,
+            engine_profile=replace(
+                profile.engine_profile,
+                synthesis_fingerprint=faster.synthesis_fingerprint,
+                engine_provider=lambda: faster,
+            ),
+        ),
+    )
+    changed_response = client.post(
+        "/api/contracts",
+        json={"text": text, "template_id": template_id},
+    )
+    assert changed_response.status_code == 200
+    changed = changed_response.json()
+
+    assert changed["segments"] == baseline["segments"]
+    assert changed["total_est_s"] == baseline["total_est_s"]
