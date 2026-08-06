@@ -26,12 +26,12 @@ _Avoid_: format, layout, language flag（Template 不是单纯版式，也不是
 音频实际使用的口语语言，例如粤语、普通话或英语。每个 Template 只对应一种 Reading Language；需要另一种朗读语言时使用另一个 Template。
 
 **Engine Profile**（引擎配置）
-一套会共同决定音频结果的完整 TTS 配置，拥有稳定的 `engine_name`，包含底层 driver、语言、模型、音色、合成参数和独立缓存版本。`engine_name` 不再只是供应商选择；即使底层使用同一个模型，不同语言或音色也必须使用不同名称，例如 `bailian_yue`、`bailian_zh`、`bailian_en`。
+一套会共同决定音频结果的完整 TTS 配置，包含稳定的 Engine Provider、具体 Driver、语言、模型、音色、合成参数、音频格式和独立缓存版本。Provider 是 Template 与运维配置依赖的稳定身份；Provider 内可以替换 Driver，例如 `microsoft` 当前使用 Edge 在线 TTS Driver，未来可换成正式 Azure Speech Driver，而不改变上层 Template 接口。
 每个 Template 绑定一个 Engine Profile。某个 Engine Profile 内任何影响音频结果的配置发生变化时，只提升该 Engine Profile 的缓存版本，不影响其他 Engine Profile 的缓存。
 单个服务实例必须同时注册并支持全部 Engine Profile；服务按每次请求所属的 Template 动态选择对应配置，不通过重启进程或修改全局环境变量来切换语言。
 
 **Cache Identity**（缓存身份）
-Segment 音频的内容寻址身份，由 Template ID、最终送入 TTS 的文本、Engine Profile ID 及其缓存版本共同决定。不同 Template 与不同 Engine Profile 严格隔离；同一 Template 和 Engine Profile 下，最终 TTS 文本完全相同的 Segment 可以跨 Contract 复用缓存。
+Segment 音频的内容寻址身份，由 Template ID、最终送入 TTS 的文本、Engine Profile 的合成指纹及其缓存版本共同决定。合成指纹覆盖会改变音频结果或格式的具体 Driver、音色、基准语速、音频格式和 adapter 版本；因此同一 `microsoft` Provider 从 Edge Driver 切换到 Azure Speech Driver 时不会误命中旧音频。不同 Template 与不同 Engine Profile 严格隔离；同一 Template 和 Engine Profile 下，最终 TTS 文本完全相同的 Segment 可以跨 Contract 复用缓存。
 _Avoid_: text-only cache key（只按文本缓存会在语言、音色或配置变化时错误复用音频）
 
 **Segment**

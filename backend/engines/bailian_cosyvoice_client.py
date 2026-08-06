@@ -18,6 +18,8 @@ import httpx
 from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
 from opencc import OpenCC
 
+from backend.audio import AudioFormat as ArtifactAudioFormat
+
 
 BailianTransport = Literal["http", "wss"]
 
@@ -27,6 +29,8 @@ class BailianSynthesisError(RuntimeError):
 
 
 class BailianCosyVoiceClient:
+    audio_format = ArtifactAudioFormat.WAV
+
     def __init__(
         self,
         api_key: str,

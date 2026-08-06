@@ -4,8 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as appmod
+from backend.audio import AudioFormat
 from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 from backend.gptsovits_client import GPTSoVITSClient
+from backend.engines.microsoft_tts import MicrosoftTTSProvider
 from backend.normalizers import normalize_for_tts_en, normalize_for_tts_zh
 from backend.segmenter import split_contract
 from backend.segmenters import (
@@ -14,7 +16,7 @@ from backend.segmenters import (
     split_contract_en,
     split_contract_zh,
 )
-from backend.templates import build_template_registry
+from backend.templates import build_template_registry, canonical_engine_name
 from tests.test_app import FakeEngine
 
 
@@ -88,6 +90,32 @@ def test_registry_rejects_unknown_engine_names():
             engine_name="gptsovits",
             engine_names={"zh": "not-an-engine"},
         )
+
+
+def test_microsoft_is_a_canonical_engine_provider_for_cantonese():
+    assert canonical_engine_name(" microsoft ") == "microsoft"
+
+    registry = build_template_registry(
+        engine_name="gptsovits",
+        engine_names={"yue": "microsoft"},
+        synthesis_fingerprints={"yue": "edge|voice=test|rate=+0%|format=mp3|adapter=v1"},
+    )
+
+    yue = registry["xcash_yue"].engine_profile
+    assert yue.id == "microsoft_yue"
+    assert yue.available
+    assert yue.synthesis_fingerprint == (
+        "edge|voice=test|rate=+0%|format=mp3|adapter=v1"
+    )
+
+
+def test_global_microsoft_enables_all_language_profiles_without_bailian_key():
+    registry = build_template_registry(engine_name="microsoft", api_key="")
+
+    assert all(profile.engine_profile.available for profile in registry.values())
+    assert registry["xcash_yue"].engine_profile.id == "microsoft_yue"
+    assert registry["xcash_zh"].engine_profile.id == "microsoft_zh"
+    assert registry["xcash_en"].engine_profile.id == "microsoft_en"
 
 
 def test_profiles_have_independently_configurable_cache_versions():
@@ -465,3 +493,140 @@ def test_make_engine_selects_language_specific_cloud_and_local_settings(monkeypa
     assert isinstance(zh_local, GPTSoVITSClient)
     assert zh_local.text_lang == "zh"
     assert zh_local.prompt_lang == "yue"
+
+
+def test_make_engine_builds_cantonese_microsoft_provider_from_server_config(
+    monkeypatch,
+):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    monkeypatch.setitem(
+        appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+        "yue",
+        appmod.MicrosoftReadingLanguageConfig(
+            voice="zh-HK-HiuMaanNeural", rate="15%"
+        ),
+    )
+
+    selected = appmod.make_engine("microsoft", "yue")
+
+    assert isinstance(selected, MicrosoftTTSProvider)
+    assert selected.driver.voice == "zh-HK-HiuMaanNeural"
+    assert selected.driver.rate == "+15%"
+    assert selected.audio_format is AudioFormat.MP3
+
+
+@pytest.mark.parametrize(
+    ("reading_language", "expected_voice"),
+    [
+        ("yue", "zh-HK-WanLungNeural"),
+        ("zh", "zh-CN-YunyangNeural"),
+        ("en", "en-HK-SamNeural"),
+    ],
+)
+def test_make_engine_builds_each_microsoft_language_with_contract_defaults(
+    monkeypatch, reading_language, expected_voice
+):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+
+    selected = appmod.make_engine("microsoft", reading_language)
+
+    assert isinstance(selected, MicrosoftTTSProvider)
+    assert selected.driver.voice == expected_voice
+    assert selected.driver.rate == "+0%"
+    assert selected.audio_format is AudioFormat.MP3
+
+
+def test_configured_engines_support_a_three_provider_language_mix(monkeypatch):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+
+    configured = appmod.build_configured_engines(
+        {"yue": "microsoft", "zh": "gptsovits", "en": "cosyvoice"}
+    )
+
+    assert isinstance(configured["yue"], MicrosoftTTSProvider)
+    assert configured["yue"].driver.voice == "zh-HK-WanLungNeural"
+    assert isinstance(configured["zh"], GPTSoVITSClient)
+    assert configured["zh"].text_lang == "zh"
+    assert isinstance(configured["en"], BailianCosyVoiceClient)
+    assert configured["en"].text_lang == "en"
+
+
+def test_microsoft_voice_and_rate_overrides_are_isolated_by_language(monkeypatch):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    overrides = {
+        "yue": appmod.MicrosoftReadingLanguageConfig("yue-voice", "5%"),
+        "zh": appmod.MicrosoftReadingLanguageConfig("zh-voice", "-10%"),
+        "en": appmod.MicrosoftReadingLanguageConfig("en-voice", "+20%"),
+    }
+    for language, config in overrides.items():
+        monkeypatch.setitem(
+            appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS, language, config
+        )
+
+    configured = appmod.build_configured_engines(
+        {"yue": "microsoft", "zh": "microsoft", "en": "microsoft"}
+    )
+
+    assert {
+        language: (provider.driver.voice, provider.driver.rate)
+        for language, provider in configured.items()
+    } == {
+        "yue": ("yue-voice", "+5%"),
+        "zh": ("zh-voice", "-10%"),
+        "en": ("en-voice", "+20%"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("reading_language", "config_field", "configured_value", "error"),
+    [
+        ("zh", "driver", "", "must be explicitly configured"),
+        ("en", "driver", "azure", "unsupported Microsoft"),
+        ("yue", "voice", "", "voice must not be empty"),
+        ("zh", "rate", "fast", "integer percentage"),
+        ("en", "rate", "+ 5%", "integer percentage"),
+    ],
+)
+def test_each_selected_microsoft_profile_is_validated_locally(
+    monkeypatch, reading_language, config_field, configured_value, error
+):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    if config_field == "driver":
+        monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", configured_value)
+    else:
+        current = appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS[reading_language]
+        monkeypatch.setitem(
+            appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+            reading_language,
+            replace(current, **{config_field: configured_value}),
+        )
+    selected = {"yue": "gptsovits", "zh": "gptsovits", "en": "gptsovits"}
+    selected[reading_language] = "microsoft"
+
+    with pytest.raises(ValueError, match=error):
+        appmod.build_configured_engines(selected)
+
+
+def test_unselected_microsoft_configuration_does_not_change_existing_defaults(
+    monkeypatch,
+):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "")
+    monkeypatch.setitem(
+        appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+        "yue",
+        appmod.MicrosoftReadingLanguageConfig("", "+0%"),
+    )
+    monkeypatch.setitem(
+        appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+        "zh",
+        appmod.MicrosoftReadingLanguageConfig("zh-voice", "invalid"),
+    )
+
+    configured = appmod.build_configured_engines(
+        {"yue": "gptsovits", "zh": "gptsovits", "en": "gptsovits"}
+    )
+
+    assert all(
+        isinstance(engine, GPTSoVITSClient) for engine in configured.values()
+    )

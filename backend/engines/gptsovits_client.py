@@ -8,8 +8,12 @@ from typing import AsyncIterator
 import httpx
 from opencc import OpenCC
 
+from backend.audio import AudioFormat
+
 
 class GPTSoVITSClient:
+    audio_format = AudioFormat.WAV
+
     def __init__(self, base_url: str, ref_audio_path: str, prompt_text: str,
                  text_lang: str = "yue", prompt_lang: str = "yue",
                  fragment_interval: float = 0.3,

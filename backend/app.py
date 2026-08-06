@@ -5,7 +5,7 @@ then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
 
 Pipeline: upload → canonical Template lookup → compute_contract_id → store raw text
 and Template metadata → profile-specific deterministic split → profile-specific
-normalization → selected Engine Profile → content-addressed cache → audio/wav.
+normalization → selected Engine Profile → content-addressed Audio Artifact cache.
 Seek maps a progress position onto a segment boundary.
 """
 from __future__ import annotations
@@ -28,6 +28,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.audio import AudioArtifact, AudioFormat
 from backend.storage.contract import (
     ContractStore,
     SegmentIndex,
@@ -39,6 +40,10 @@ from backend.engines.gptsovits_client import GPTSoVITSClient
 from backend.engines.bailian_cosyvoice_client import (
     BailianCosyVoiceClient,
     BailianSynthesisError,
+)
+from backend.engines.microsoft_tts import (
+    MicrosoftSynthesisError,
+    build_microsoft_provider,
 )
 from backend.templates import (
     TemplateProfile,
@@ -174,6 +179,37 @@ ENGINE_NAMES = {
     )
     for language in ("yue", "zh", "en")
 }
+MICROSOFT_TTS_DRIVER = os.getenv("MICROSOFT_TTS_DRIVER", "").strip()
+
+
+@dataclass(frozen=True)
+class MicrosoftReadingLanguageConfig:
+    """Server-side Microsoft voice and base rate for one Reading Language."""
+
+    voice: str
+    rate: str
+
+
+MICROSOFT_TTS_LANGUAGE_CONFIGS = {
+    "yue": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_YUE", "zh-HK-WanLungNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_YUE", "+0%").strip(),
+    ),
+    "zh": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_ZH", "zh-CN-YunyangNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_ZH", "+0%").strip(),
+    ),
+    "en": MicrosoftReadingLanguageConfig(
+        voice=os.getenv(
+            "MICROSOFT_TTS_VOICE_EN", "en-HK-SamNeural"
+        ).strip(),
+        rate=os.getenv("MICROSOFT_TTS_RATE_EN", "+0%").strip(),
+    ),
+}
 BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
 BAILIAN_HTTP_BASE_URL = os.getenv(
     "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
@@ -216,6 +252,13 @@ ENGINE_PROFILE_CACHE_VERSIONS = {
 def make_engine(name: str | None = None, reading_language: str = "yue"):
     """Construct the configured adapter for one reading-language profile."""
     name = canonical_engine_name(name or ENGINE_NAMES[reading_language])
+    if name == "microsoft":
+        settings = MICROSOFT_TTS_LANGUAGE_CONFIGS[reading_language]
+        return build_microsoft_provider(
+            driver_name=MICROSOFT_TTS_DRIVER,
+            voice=settings.voice,
+            rate=settings.rate,
+        )
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
         return BailianCosyVoiceClient(
@@ -241,6 +284,17 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
     )
 
 
+def build_configured_engines(
+    engine_names: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Construct one locally validated engine binding per Reading Language."""
+    selected = engine_names or ENGINE_NAMES
+    return {
+        language: make_engine(selected[language], language)
+        for language in ("yue", "zh", "en")
+    }
+
+
 class ContractUpload(BaseModel):
     text: str
     template_id: str
@@ -253,17 +307,27 @@ def _has_readable_contract_text(text: str) -> bool:
 
 cache = SegmentCache(CACHE_DIR)
 CONTRACT_STORE = ContractStore(UPLOADED_DIR)
-engine = make_engine(reading_language="yue")
+CONFIGURED_ENGINES = build_configured_engines()
+# Compatibility alias used by existing Cantonese tests and local integrations.
+engine = CONFIGURED_ENGINES["yue"]
 TEMPLATE_REGISTRY = build_template_registry(
     engine_name=ENGINE_NAME,
     engine_names=ENGINE_NAMES,
     api_key=os.getenv("DASHSCOPE_API_KEY", ""),
     engine_provider=lambda: engine,
     engine_providers={
-        "zh": lambda: make_engine(reading_language="zh"),
-        "en": lambda: make_engine(reading_language="en"),
+        "zh": lambda: CONFIGURED_ENGINES["zh"],
+        "en": lambda: CONFIGURED_ENGINES["en"],
     },
     cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
+    synthesis_fingerprints={
+        language: getattr(
+            CONFIGURED_ENGINES[language],
+            "synthesis_fingerprint",
+            "audio-artifact-v1",
+        )
+        for language in ("yue", "zh", "en")
+    },
 )
 
 
@@ -378,6 +442,7 @@ def _cache_identity(profile: TemplateProfile, tts_text: str) -> str:
         tts_text,
         engine_profile.id,
         engine_profile.cache_version,
+        synthesis_fingerprint=engine_profile.synthesis_fingerprint,
     )
 
 
@@ -394,22 +459,25 @@ async def _synth_and_cache(
     key: str,
     engine_input_text: str,
     selected_engine,
-) -> bytes:
-    """合成音频并写入缓存，返回字节。命中缓存则直接读回；未命中则在 per-key 锁内
+) -> AudioArtifact:
+    """合成 Audio Artifact 并写入缓存。命中则直接返回；未命中则在 per-key 锁内
     合成（并发的相同请求只合成一次）。"""
     cached = cache.get(key)
     if cached is not None:
-        return cached.read_bytes()
+        return cached
     async with _lock_for(key):
         cached_again = cache.get(key)            # 拿锁后二次查，去并发重复合成
         if cached_again is not None:
-            return cached_again.read_bytes()
+            return cached_again
+        audio_format = getattr(selected_engine, "audio_format", None)
+        if not isinstance(audio_format, AudioFormat):
+            raise TypeError("TTS engine must declare a canonical audio_format")
         buf = bytearray()
         async for chunk in selected_engine.synth(engine_input_text):
             buf.extend(chunk)
-        data = bytes(buf)
-        cache.put(key, data)
-        return data
+        artifact = AudioArtifact(bytes(buf), audio_format)
+        cache.put(key, artifact)
+        return artifact
 
 
 def _index_response(idx: SegmentIndex) -> dict:
@@ -477,11 +545,13 @@ async def get_segment(contract_id: str, seg_idx: int):
     key = _cache_identity(profile, tts_text)
     # 整段合成完再返回：引擎失败时能回明确的 502/500，而不是被浏览器吞成空 200（"Load failed"）。
     try:
-        data = await _synth_and_cache(key, normalized_text, selected_engine)
-        return Response(data, media_type="audio/wav")
+        artifact = await _synth_and_cache(key, normalized_text, selected_engine)
+        return Response(artifact.data, media_type=artifact.media_type)
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
     except BailianSynthesisError as e:
+        raise HTTPException(status_code=502, detail=f"engine failed: {e}")
+    except MicrosoftSynthesisError as e:
         raise HTTPException(status_code=502, detail=f"engine failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"tts failed: {e}")

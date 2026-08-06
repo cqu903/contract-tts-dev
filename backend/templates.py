@@ -15,6 +15,7 @@ _ENGINE_ALIASES = {
     "bailian": "bailian",
     "cosyvoice": "bailian",
     "gptsovits": "gptsovits",
+    "microsoft": "microsoft",
 }
 _READING_LANGUAGES = ("yue", "zh", "en")
 
@@ -37,6 +38,7 @@ class EngineProfile:
 
     id: str
     cache_version: str = "v1"
+    synthesis_fingerprint: str = "audio-artifact-v1"
     available: bool = True
     engine_provider: Callable[[], object] = lambda: None
 
@@ -60,6 +62,7 @@ def build_template_registry(*, engine_name: str, api_key: str = "",
                             engine_provider: Callable[[], object] | None = None,
                             engine_providers: dict[str, Callable[[], object]] | None = None,
                             cache_versions: dict[str, str] | None = None,
+                            synthesis_fingerprints: dict[str, str] | None = None,
                             ) -> dict[str, TemplateProfile]:
     """Build the currently registered Template profiles.
 
@@ -69,6 +72,7 @@ def build_template_registry(*, engine_name: str, api_key: str = "",
     """
     providers = engine_providers or {}
     versions = cache_versions or {}
+    fingerprints = synthesis_fingerprints or {}
     default_engine = canonical_engine_name(engine_name)
     configured_engines = engine_names or {}
     selected_engines = {
@@ -80,24 +84,31 @@ def build_template_registry(*, engine_name: str, api_key: str = "",
 
     def is_available(language: str) -> bool:
         selected = selected_engines[language]
-        return selected == "gptsovits" or (selected == "bailian" and bool(api_key))
+        return (
+            selected == "gptsovits"
+            or (selected == "bailian" and bool(api_key))
+            or selected == "microsoft"
+        )
 
     yue_provider = engine_provider or providers.get("yue") or (lambda: None)
     yue_profile = EngineProfile(
         id=f"{selected_engines['yue']}_yue",
         cache_version=versions.get("yue", "v1"),
+        synthesis_fingerprint=fingerprints.get("yue", "audio-artifact-v1"),
         available=is_available("yue"),
         engine_provider=yue_provider,
     )
     zh_profile = EngineProfile(
         id=f"{selected_engines['zh']}_zh",
         cache_version=versions.get("zh", "v1"),
+        synthesis_fingerprint=fingerprints.get("zh", "audio-artifact-v1"),
         available=is_available("zh"),
         engine_provider=providers.get("zh", yue_provider),
     )
     en_profile = EngineProfile(
         id=f"{selected_engines['en']}_en",
         cache_version=versions.get("en", "v1"),
+        synthesis_fingerprint=fingerprints.get("en", "audio-artifact-v1"),
         available=is_available("en"),
         engine_provider=providers.get("en", yue_provider),
     )

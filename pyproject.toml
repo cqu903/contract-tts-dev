@@ -1,11 +1,12 @@
 [project]
 name = "cantonese-contract-tts"
 version = "0.0.0"
-description = "Cantonese contract-TTS service: external TXT upload, content-addressed segmentation + per-segment normalization + seek, on GPT-SoVITS (local) or Bailian CosyVoice (cloud)."
+description = "Contract-TTS service with multilingual segmentation, content-addressed audio, and selectable GPT-SoVITS, CosyVoice, or Microsoft providers."
 requires-python = ">=3.12"
 dependencies = [
     "cn2an>=0.5.24",
     "dashscope>=1.26.5",
+    "edge-tts>=7.2.8,<8",
     "fastapi>=0.140.0",
     "httpx>=0.28.1",
     "opencc-python-reimplemented>=0.1.7",
