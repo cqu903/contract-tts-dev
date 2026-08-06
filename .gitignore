@@ -33,6 +33,8 @@ refs/*.wav
 refs/*.mp3
 # generated A/B verification audio clips
 verify/
+# locally generated TTS previews
+.scratch/**/previews/
 
 # Real contract texts may contain PII (names, ID numbers, addresses);
 # only the synthetic sample is tracked.
