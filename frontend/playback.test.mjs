@@ -27,6 +27,20 @@ test("a preloaded segment is reused without another network request", async () =
 });
 
 
+test("an MP3 segment keeps the response Blob media type", async () => {
+  const expectedBlob = new Blob(["mp3-segment"], { type: "audio/mpeg" });
+  const buffer = new SegmentAudioBuffer(async () => ({
+    ok: true,
+    blob: async () => expectedBlob,
+  }));
+
+  const loadedBlob = await buffer.load("contract-1", 2);
+
+  assert.equal(loadedBlob, expectedBlob);
+  assert.equal(loadedBlob.type, "audio/mpeg");
+});
+
+
 test("Cantonese defaults to the intermediate playback speed", () => {
   assert.equal(preferredPlaybackRate("xcash_yue"), 1.1);
   assert.equal(preferredPlaybackRate("xcash_zh"), 1.0);

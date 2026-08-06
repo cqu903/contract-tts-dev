@@ -37,6 +37,7 @@ class EngineProfile:
 
     id: str
     cache_version: str = "v1"
+    synthesis_fingerprint: str = "audio-artifact-v1"
     available: bool = True
     engine_provider: Callable[[], object] = lambda: None
 

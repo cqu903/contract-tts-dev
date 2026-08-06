@@ -1,10 +1,13 @@
+import asyncio
 import hashlib
 import os
 import time
 from dataclasses import replace
 
+import httpx
 from fastapi.testclient import TestClient
 import backend.app as appmod
+from backend.audio import AudioArtifact, AudioFormat
 from backend.cache import SegmentCache
 from backend.contract import ContractStore
 from backend.gptsovits_client import GPTSoVITSClient
@@ -12,14 +15,31 @@ from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 
 
 class FakeEngine:
-    def __init__(self):
+    def __init__(self, audio_format=AudioFormat.WAV):
         self.calls = 0
         self.texts = []
+        self.audio_format = audio_format
 
     async def synth(self, text, transport=None):
         self.calls += 1
         self.texts.append(text)
         yield f"audio:{text}".encode()
+
+
+class SlowFakeEngine(FakeEngine):
+    async def synth(self, text, transport=None):
+        self.calls += 1
+        self.texts.append(text)
+        await asyncio.sleep(0.05)
+        yield f"audio:{text}".encode()
+
+
+class PartialFailureEngine(FakeEngine):
+    async def synth(self, text, transport=None):
+        self.calls += 1
+        self.texts.append(text)
+        yield b"partial"
+        raise RuntimeError("stream interrupted")
 
 
 def _setup(tmp_path, monkeypatch):
@@ -58,6 +78,69 @@ def test_upload_index_and_segment_caches_after_first_call(tmp_path, monkeypatch)
 
     r2 = client.get(f"/api/contracts/{cid}/segments/1")   # cache hit, no new synth
     assert r2.status_code == 200 and fake.calls == baseline + 1
+
+
+def test_segment_response_uses_the_engine_audio_format(tmp_path, monkeypatch):
+    fake = _setup(tmp_path, monkeypatch)
+    fake.audio_format = AudioFormat.MP3
+    client = TestClient(appmod.app)
+
+    cid = _upload(client, text="格式感知。", template_id="xcash_yue")
+    response = client.get(f"/api/contracts/{cid}/segments/0")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content == "audio:格式感知。".encode()
+
+
+def test_concurrent_requests_for_the_same_segment_synthesize_once(
+    tmp_path, monkeypatch
+):
+    _setup(tmp_path, monkeypatch)
+    slow = SlowFakeEngine()
+    monkeypatch.setattr(appmod, "engine", slow)
+
+    async def request_twice():
+        transport = httpx.ASGITransport(app=appmod.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            upload = await client.post(
+                "/api/contracts",
+                json={"text": "第一句。第二句。", "template_id": "xcash"},
+            )
+            assert upload.status_code == 200
+            cid = upload.json()["contract_id"]
+            calls_after_warm = slow.calls
+            responses = await asyncio.gather(
+                client.get(f"/api/contracts/{cid}/segments/1"),
+                client.get(f"/api/contracts/{cid}/segments/1"),
+            )
+        return calls_after_warm, responses
+
+    calls_after_warm, responses = asyncio.run(request_twice())
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert slow.calls == calls_after_warm + 1
+    assert responses[0].content == responses[1].content
+
+
+def test_interrupted_synthesis_does_not_leave_a_partial_cache_hit(
+    tmp_path, monkeypatch
+):
+    _setup(tmp_path, monkeypatch)
+    failing = PartialFailureEngine()
+    monkeypatch.setattr(appmod, "engine", failing)
+    client = TestClient(appmod.app)
+    cid = _upload(client, text="预热段。失败段。")
+    calls_after_warm = failing.calls
+
+    first = client.get(f"/api/contracts/{cid}/segments/1")
+    second = client.get(f"/api/contracts/{cid}/segments/1")
+
+    assert first.status_code == 500
+    assert second.status_code == 500
+    assert failing.calls == calls_after_warm + 2
 
 
 def test_unknown_template_id_returns_400(tmp_path, monkeypatch):
@@ -168,6 +251,39 @@ def test_template_profile_selects_its_engine_provider(tmp_path, monkeypatch):
     assert default_engine.calls == 0
 
 
+def test_engine_profile_synthesis_fingerprint_isolates_cached_audio(
+    tmp_path, monkeypatch
+):
+    fake = _setup(tmp_path, monkeypatch)
+    profile = appmod.TEMPLATE_REGISTRY["xcash_yue"]
+    first_profile = replace(
+        profile,
+        engine_profile=replace(
+            profile.engine_profile,
+            synthesis_fingerprint="wav-adapter-v1",
+        ),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", first_profile)
+    client = TestClient(appmod.app)
+    cid = _upload(client, text="缓存指纹。", template_id="xcash_yue")
+    calls_after_warm = fake.calls
+
+    assert client.get(f"/api/contracts/{cid}/segments/0").status_code == 200
+    assert fake.calls == calls_after_warm
+
+    second_profile = replace(
+        first_profile,
+        engine_profile=replace(
+            first_profile.engine_profile,
+            synthesis_fingerprint="wav-adapter-v2",
+        ),
+    )
+    monkeypatch.setitem(appmod.TEMPLATE_REGISTRY, "xcash_yue", second_profile)
+
+    assert client.get(f"/api/contracts/{cid}/segments/0").status_code == 200
+    assert fake.calls == calls_after_warm + 1
+
+
 def test_new_pipeline_does_not_hit_legacy_cache_key(tmp_path, monkeypatch):
     fake = _setup(tmp_path, monkeypatch)
     client = TestClient(appmod.app)
@@ -179,7 +295,10 @@ def test_new_pipeline_does_not_hit_legacy_cache_key(tmp_path, monkeypatch):
     legacy_key = hashlib.sha256(
         f"{tts_text}|{appmod.ENGINE_NAME}".encode("utf-8")
     ).hexdigest()
-    appmod.cache.put(legacy_key, b"legacy-audio")
+    appmod.cache.put(
+        legacy_key,
+        AudioArtifact(b"legacy-audio", AudioFormat.WAV),
+    )
     baseline = fake.calls
 
     response = client.get(f"/api/contracts/{cid}/segments/1")
@@ -240,7 +359,18 @@ def test_make_engine_passes_bailian_transport_configuration(monkeypatch):
 
 
 def test_make_engine_defaults_to_gptsovits():
-    assert isinstance(appmod.make_engine("gptsovits"), GPTSoVITSClient)
+    engine = appmod.make_engine("gptsovits")
+    assert isinstance(engine, GPTSoVITSClient)
+    assert engine.audio_format is AudioFormat.WAV
+
+
+def test_make_engine_bailian_declares_wav_audio(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-x")
+
+    engine = appmod.make_engine("bailian")
+
+    assert isinstance(engine, BailianCosyVoiceClient)
+    assert engine.audio_format is AudioFormat.WAV
 
 
 def test_make_engine_builds_cross_lingual_gptsovits_profiles():
@@ -356,10 +486,20 @@ def test_run_cleanup_evicts_expired_keeps_fresh(tmp_path, monkeypatch):
     DAY = 86400
     # 过期原文（>90d）+ 过期音频（>30d）
     appmod.CONTRACT_STORE.put("coldcid", "old", now=now - 95 * DAY)
-    appmod.cache.put("coldkey", b"RIFFxxxx", duration=1.0, now=now - 35 * DAY)
+    appmod.cache.put(
+        "coldkey",
+        AudioArtifact(b"RIFFxxxx", AudioFormat.WAV),
+        duration=1.0,
+        now=now - 35 * DAY,
+    )
     # 未过期对照
     appmod.CONTRACT_STORE.put("hotcid", "fresh", now=now)
-    appmod.cache.put("hotkey", b"RIFFyyyy", duration=1.0, now=now)
+    appmod.cache.put(
+        "hotkey",
+        AudioArtifact(b"RIFFyyyy", AudioFormat.WAV),
+        duration=1.0,
+        now=now,
+    )
 
     appmod.run_cleanup()
 
