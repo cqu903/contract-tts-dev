@@ -41,6 +41,10 @@ from backend.engines.bailian_cosyvoice_client import (
     BailianCosyVoiceClient,
     BailianSynthesisError,
 )
+from backend.engines.microsoft_tts import (
+    MicrosoftSynthesisError,
+    build_microsoft_provider,
+)
 from backend.templates import (
     TemplateProfile,
     build_template_registry,
@@ -175,6 +179,11 @@ ENGINE_NAMES = {
     )
     for language in ("yue", "zh", "en")
 }
+MICROSOFT_TTS_DRIVER = os.getenv("MICROSOFT_TTS_DRIVER", "").strip()
+MICROSOFT_TTS_VOICE_YUE = os.getenv(
+    "MICROSOFT_TTS_VOICE_YUE", "zh-HK-WanLungNeural"
+).strip()
+MICROSOFT_TTS_RATE_YUE = os.getenv("MICROSOFT_TTS_RATE_YUE", "+0%").strip()
 BAILIAN_TRANSPORT = os.getenv("BAILIAN_TRANSPORT", "http").lower()
 BAILIAN_HTTP_BASE_URL = os.getenv(
     "BAILIAN_HTTP_BASE_URL", "https://dashscope.aliyuncs.com"
@@ -217,6 +226,16 @@ ENGINE_PROFILE_CACHE_VERSIONS = {
 def make_engine(name: str | None = None, reading_language: str = "yue"):
     """Construct the configured adapter for one reading-language profile."""
     name = canonical_engine_name(name or ENGINE_NAMES[reading_language])
+    if name == "microsoft":
+        if reading_language != "yue":
+            raise ValueError(
+                "Microsoft TTS supports only the yue profile in this release"
+            )
+        return build_microsoft_provider(
+            driver_name=MICROSOFT_TTS_DRIVER,
+            voice=MICROSOFT_TTS_VOICE_YUE,
+            rate=MICROSOFT_TTS_RATE_YUE,
+        )
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
         return BailianCosyVoiceClient(
@@ -265,6 +284,9 @@ TEMPLATE_REGISTRY = build_template_registry(
         "en": lambda: make_engine(reading_language="en"),
     },
     cache_versions=ENGINE_PROFILE_CACHE_VERSIONS,
+    synthesis_fingerprints={
+        "yue": getattr(engine, "synthesis_fingerprint", "audio-artifact-v1"),
+    },
 )
 
 
@@ -487,6 +509,8 @@ async def get_segment(contract_id: str, seg_idx: int):
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"engine {e.response.status_code}: {e.response.text[:160]}")
     except BailianSynthesisError as e:
+        raise HTTPException(status_code=502, detail=f"engine failed: {e}")
+    except MicrosoftSynthesisError as e:
         raise HTTPException(status_code=502, detail=f"engine failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"tts failed: {e}")

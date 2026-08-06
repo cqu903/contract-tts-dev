@@ -4,8 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app as appmod
+from backend.audio import AudioFormat
 from backend.bailian_cosyvoice_client import BailianCosyVoiceClient
 from backend.gptsovits_client import GPTSoVITSClient
+from backend.engines.microsoft_tts import MicrosoftTTSProvider
 from backend.normalizers import normalize_for_tts_en, normalize_for_tts_zh
 from backend.segmenter import split_contract
 from backend.segmenters import (
@@ -14,7 +16,7 @@ from backend.segmenters import (
     split_contract_en,
     split_contract_zh,
 )
-from backend.templates import build_template_registry
+from backend.templates import build_template_registry, canonical_engine_name
 from tests.test_app import FakeEngine
 
 
@@ -88,6 +90,23 @@ def test_registry_rejects_unknown_engine_names():
             engine_name="gptsovits",
             engine_names={"zh": "not-an-engine"},
         )
+
+
+def test_microsoft_is_a_canonical_engine_provider_for_cantonese():
+    assert canonical_engine_name(" microsoft ") == "microsoft"
+
+    registry = build_template_registry(
+        engine_name="gptsovits",
+        engine_names={"yue": "microsoft"},
+        synthesis_fingerprints={"yue": "edge|voice=test|rate=+0%|format=mp3|adapter=v1"},
+    )
+
+    yue = registry["xcash_yue"].engine_profile
+    assert yue.id == "microsoft_yue"
+    assert yue.available
+    assert yue.synthesis_fingerprint == (
+        "edge|voice=test|rate=+0%|format=mp3|adapter=v1"
+    )
 
 
 def test_profiles_have_independently_configurable_cache_versions():
@@ -465,3 +484,20 @@ def test_make_engine_selects_language_specific_cloud_and_local_settings(monkeypa
     assert isinstance(zh_local, GPTSoVITSClient)
     assert zh_local.text_lang == "zh"
     assert zh_local.prompt_lang == "yue"
+
+
+def test_make_engine_builds_cantonese_microsoft_provider_from_server_config(
+    monkeypatch,
+):
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    monkeypatch.setattr(
+        appmod, "MICROSOFT_TTS_VOICE_YUE", "zh-HK-HiuMaanNeural"
+    )
+    monkeypatch.setattr(appmod, "MICROSOFT_TTS_RATE_YUE", "15%")
+
+    selected = appmod.make_engine("microsoft", "yue")
+
+    assert isinstance(selected, MicrosoftTTSProvider)
+    assert selected.driver.voice == "zh-HK-HiuMaanNeural"
+    assert selected.driver.rate == "+15%"
+    assert selected.audio_format is AudioFormat.MP3
