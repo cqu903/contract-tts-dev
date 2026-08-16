@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>合同朗讀 · 文稿跟讀（移動版）</title>
+  <style>
+    :root {
+      --paper: #faf9f6;
+      --ink: #1f2328;
+      --ink-soft: #6b7280;
+      --line: #e5e2da;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+      --hl: #fef3c7;
+      --err: #b3261e;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      font: 16px/1.6 -apple-system, "PingFang HK", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      /* 底部 mini-player 高度 + 安全区 */
+      padding-bottom: calc(118px + env(safe-area-inset-bottom));
+    }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 0 16px; }
+
+    /* ---- 頂欄 ---- */
+    header {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(250, 249, 246, .92);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid var(--line);
+      padding-top: env(safe-area-inset-top);
+    }
+    header .wrap { display: flex; align-items: baseline; gap: .6rem; padding: .65rem 16px; }
+    header h1 { font-size: 1.05rem; margin: 0; }
+    header .sub { font-size: .78rem; color: var(--ink-soft); }
+    #tplBadge { margin-left: auto; font-size: .75rem; color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 999px; padding: .1rem .55rem; white-space: nowrap; }
+
+    /* ---- 上傳區 ---- */
+    #uploadCard { padding: .9rem 0 .4rem; }
+    #uploadCard label.legend { display: block; font-size: .8rem; color: var(--ink-soft); margin-bottom: .4rem; }
+    .tpl-chips { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .tpl-chip {
+      appearance: none; font: inherit; font-size: .88rem;
+      border: 1px solid var(--line); background: #fff; color: var(--ink);
+      border-radius: 999px; padding: .45rem .95rem; min-height: 44px; cursor: pointer;
+    }
+    .tpl-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+    #tplHint { font-size: .78rem; color: var(--ink-soft); margin: .45rem 0 .7rem; min-height: 1.2em; }
+    textarea {
+      width: 100%; height: 132px; font: inherit; padding: .6rem;
+      border: 1px solid var(--line); border-radius: 10px; background: #fff;
+      resize: vertical;
+    }
+    .upload-actions { display: flex; gap: .6rem; align-items: center; margin-top: .55rem; }
+    #loadSample { appearance: none; font: inherit; font-size: .85rem; color: var(--accent);
+      background: none; border: none; text-decoration: underline; padding: .5rem .2rem; cursor: pointer; }
+    #startBtn {
+      appearance: none; font: inherit; font-size: 1rem; font-weight: 600;
+      margin-left: auto; border: none; border-radius: 10px; cursor: pointer;
+      background: var(--accent); color: #fff; padding: .7rem 1.4rem; min-height: 44px;
+    }
+    #startBtn:disabled { opacity: .55; }
+    #uploadErr { color: var(--err); font-size: .82rem; margin-top: .45rem; display: none; }
+
+    /* 上傳後折疊摘要 */
+    #summaryRow {
+      display: none; align-items: center; gap: .6rem;
+      padding: .7rem 0; border-bottom: 1px solid var(--line);
+    }
+    #summaryRow .meta { font-size: .88rem; }
+    #summaryRow .meta b { color: var(--accent); }
+    #reuploadBtn {
+      appearance: none; font: inherit; font-size: .8rem; margin-left: auto;
+      border: 1px solid var(--line); background: #fff; border-radius: 999px;
+      padding: .35rem .85rem; min-height: 44px; cursor: pointer;
+    }
+
+    /* ---- 文稿 ---- */
+    #noteLine { display: none; font-size: .74rem; color: var(--ink-soft); padding: .5rem 0 0; }
+    #doc { padding: .6rem 0 2rem; }
+    #doc .empty { color: var(--ink-soft); font-size: .9rem; text-align: center; padding: 3rem 1rem; }
+    #doc .block {
+      font-family: "Songti TC", "Noto Serif TC", Georgia, serif;
+      font-size: 1.02rem; line-height: 1.9;
+      padding: .55rem .6rem .55rem .85rem; margin: 0 0 .35rem;
+      border-radius: 8px; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: background-color .25s, border-color .25s;
+    }
+    #doc .block.read { border-left-color: var(--line); color: #4b5563; }
+    #doc .block.cur { background: var(--hl); border-left-color: var(--accent); }
+
+    /* ---- 底部 mini-player ---- */
+    #player {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+      background: #fff; border-top: 1px solid var(--line);
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, .06);
+      padding: .55rem 14px calc(.55rem + env(safe-area-inset-bottom));
+    }
+    #player .bar { display: flex; align-items: center; gap: .7rem; max-width: 640px; margin: 0 auto; }
+    #playBtn {
+      appearance: none; border: none; cursor: pointer; flex: none;
+      width: 48px; height: 48px; border-radius: 50%;
+      background: var(--accent); color: #fff; font-size: 1.15rem;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #playBtn:disabled { background: #c9cdd4; }
+    #track {
+      flex: 1; height: 44px; display: flex; align-items: center; cursor: pointer;
+      touch-action: none; /* 拖動進度時不要觸發頁面滾動 */
+    }
+    #track .rail { position: relative; width: 100%; height: 6px; border-radius: 3px; background: #e8e6df; }
+    #track .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+      border-radius: 3px; background: var(--accent); }
+    #track .thumb { position: absolute; top: 50%; width: 16px; height: 16px;
+      transform: translate(-50%, -50%); border-radius: 50%;
+      background: #fff; border: 2px solid var(--accent); left: 0; }
+    #meta { flex: none; text-align: right; }
+    #segLabel { font-size: .82rem; font-weight: 600; }
+    #segLabel small { color: var(--ink-soft); font-weight: 400; }
+    #timeLabel { font-size: .72rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+    #speedBtn {
+      appearance: none; font: inherit; flex: none; font-size: .8rem;
+      border: 1px solid var(--line); background: #fff; border-radius: 999px;
+      padding: .3rem .6rem; min-height: 44px; min-width: 52px; cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    #statusRow {
+      max-width: 640px; margin: .3rem auto 0; font-size: .74rem; color: var(--ink-soft);
+      min-height: 1.1em; display: flex; align-items: center; gap: .5rem;
+    }
+    #statusRow.err { color: var(--err); }
+    #retryBtn { display: none; appearance: none; font: inherit; font-size: .74rem;
+      color: #fff; background: var(--err); border: none; border-radius: 6px;
+      padding: .25rem .7rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>合同朗讀</h1><span class="sub">文稿跟讀 · 邊看邊聽</span>
+      <span id="tplBadge" hidden></span>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section id="uploadCard" aria-label="上傳合同">
+      <label class="legend" for="tplChips">朗讀語音</label>
+      <div class="tpl-chips" id="tplChips" role="group" aria-label="朗讀語音"></div>
+      <p id="tplHint"></p>
+      <textarea id="text" placeholder="貼上合同全文（建議每條條款一行）…"></textarea>
+      <div class="upload-actions">
+        <button id="loadSample" type="button">載入示例</button>
+        <button id="startBtn" type="button">開始朗讀</button>
+      </div>
+      <p id="uploadErr" role="alert"></p>
+    </section>
+
+    <section id="summaryRow" aria-label="合同摘要">
+      <span class="meta" id="summaryMeta"></span>
+      <button id="reuploadBtn" type="button">重新上傳</button>
+    </section>
+
+    <p id="noteLine">※ 進度對齊為時間近似（API 不回傳分段文本）；底部段號為實際值。</p>
+    <main id="doc">
+      <p class="empty">貼上合同，一邊讀一邊聽</p>
+    </main>
+  </div>
+
+  <footer id="player">
+    <div class="bar">
+      <button id="playBtn" type="button" aria-label="播放 / 暫停" disabled>▶</button>
+      <div id="track" aria-label="朗讀進度（可拖動）">
+        <div class="rail"><div class="fill"></div><div class="thumb"></div></div>
+      </div>
+      <div id="meta">
+        <div id="segLabel">未上傳</div>
+        <div id="timeLabel"></div>
+      </div>
+      <button id="speedBtn" type="button" disabled>1×</button>
+    </div>
+    <div id="statusRow"><span id="statusText">請先上傳合同文稿</span><button id="retryBtn" type="button">重試</button></div>
+  </footer>
+
+  <script type="module" src="mobile.mjs"></script>
+</body>
+</html>
