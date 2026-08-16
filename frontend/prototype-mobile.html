@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  ⚠️ THROWAWAY UI PROTOTYPE — 回答一个问题：「合同朗讀 demo 的移動端（H5/App WebView）應該長什麼樣？」
+  3 個結構性不同的變體，經 ?variant=A|B|C 切換（浮動底欄 / 鍵盤 ←→）：
+    A 全屏播放器 · B 文稿跟讀 · C 語音氣泡流
+  訪問 http://127.0.0.1:8000/prototype-mobile.html （由 backend.app:app 靜態掛載，無需額外命令）。
+  變體文件：prototype-mobile-{a,b,c}.mjs；外殼：prototype-mobile-shell.mjs。
+  勝出變體折疊進正式前端後，其餘移到 throwaway 分支，main 不留切換器（見 /prototype 技能）。
+-->
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>PROTOTYPE — 移動端合同朗讀</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 16px/1.6 -apple-system, "PingFang HK", sans-serif;
+      background: #2b2d31;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100dvh;
+    }
+    /* ---- 桌面：說明條 + 手機外框 ---- */
+    #protoHeader {
+      color: #9aa0ab; font-size: 12px; text-align: center; margin-bottom: 10px;
+      padding: 0 1rem;
+    }
+    #protoHeader b { color: #e8eaed; }
+    #protoHeader a { color: #8ab4f8; }
+    #phone {
+      width: 390px; height: 844px; max-height: calc(100dvh - 96px);
+      background: #000; border-radius: 44px; padding: 10px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.55);
+      flex: none;
+    }
+    #screen {
+      position: relative;            /* 變體內的 absolute 底欄以此為定位祖先 */
+      width: 100%; height: 100%;
+      overflow: hidden;
+      border-radius: 34px;
+      background: #fff;
+    }
+    /* ---- 真手機（窄視口）：外框消失，鋪滿屏幕 ---- */
+    @media (max-width: 520px) {
+      body { background: #fff; }
+      #protoHeader { display: none; }
+      #phone { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; padding: 0; box-shadow: none; }
+      #screen { border-radius: 0; }
+    }
+    /* ---- 變體切換浮欄（不屬於被評估的設計，刻意高對比） ---- */
+    #switcher {
+      position: fixed; left: 50%; transform: translateX(-50%); bottom: 12px;
+      z-index: 9999;
+      display: flex; align-items: center; gap: 2px;
+      background: #101318; color: #fff;
+      border: 1px solid #4a5261; border-radius: 999px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.5);
+      font-size: 14px; user-select: none;
+    }
+    #switcher button {
+      appearance: none; border: none; background: transparent; color: #cdd3de;
+      font: inherit; padding: 8px 12px; cursor: pointer; border-radius: 999px;
+    }
+    #switcher button:active { background: #2a3140; }
+    #switcherLabel { min-width: 128px; text-align: center; font-weight: 600; color: #fff; }
+    #switcherLabel small { display: block; font-weight: 400; color: #9aa0ab; font-size: 11px; }
+    .proto-error {
+      padding: 2rem 1.2rem; color: #b3261e; font-size: 14px; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="protoHeader">
+    <b>THROWAWAY PROTOTYPE</b> · 移動端合同朗讀 · 3 個變體（<code>?variant=A|B|C</code>，鍵盤 ← → 切換）·
+    真機訪問本頁即全屏 · <a href="/">桌面 demo</a>
+  </div>
+  <div id="phone"><div id="screen"></div></div>
+  <div id="switcher">
+    <button id="prevVariant" aria-label="上一個變體">◀</button>
+    <div id="switcherLabel"></div>
+    <button id="nextVariant" aria-label="下一個變體">▶</button>
+  </div>
+  <script type="module" src="prototype-mobile-shell.mjs"></script>
+</body>
+</html>
