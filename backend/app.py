@@ -1,7 +1,7 @@
 """FastAPI orchestrator for the external multilingual contract-TTS service.
 
 Callers POST a contract TXT + template_id, get back a content-addressed contract_id,
-then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
+then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0009.
 
 Pipeline: upload → canonical Template lookup → compute_contract_id → store raw text
 and Template metadata → profile-specific deterministic split → profile-specific
@@ -180,6 +180,9 @@ ENGINE_NAMES = {
     for language in ("yue", "zh", "en")
 }
 MICROSOFT_TTS_DRIVER = os.getenv("MICROSOFT_TTS_DRIVER", "").strip()
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "").strip()
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "").strip()
+AZURE_SPEECH_ENDPOINT = os.getenv("AZURE_SPEECH_ENDPOINT", "").strip()
 
 
 @dataclass(frozen=True)
@@ -258,6 +261,9 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
             driver_name=MICROSOFT_TTS_DRIVER,
             voice=settings.voice,
             rate=settings.rate,
+            azure_subscription_key=AZURE_SPEECH_KEY,
+            azure_region=AZURE_SPEECH_REGION,
+            azure_endpoint=AZURE_SPEECH_ENDPOINT,
         )
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
