@@ -14,10 +14,16 @@
     .playback-settings select { padding:.2rem .35rem; font:inherit; }
     .clause { color: #888; font-size: .9em; margin-top: .3em; }
     button { margin-top: .5rem; }
+    .page-nav { display:flex; justify-content:flex-end; margin-bottom:1rem; }
+    .page-nav a { color:#075985; font-weight:600; text-decoration:none; }
+    .page-nav a:hover { text-decoration:underline; }
     .hint { font-size: .85em; color: #777; }
   </style>
 </head>
 <body>
+  <nav class="page-nav" aria-label="頁面導航">
+    <a href="/api-docs">API 接入文檔 →</a>
+  </nav>
   <h2>多語言合同朗讀(對外服務 demo)</h2>
   <p class="hint">選擇合同模板後貼上原文；模板會同時決定切分、文字處理和朗讀語言。</p>
   <label for="template">朗讀模板</label>

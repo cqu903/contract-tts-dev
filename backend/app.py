@@ -24,7 +24,7 @@ if __package__ in {None, ""}:
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -582,6 +582,13 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
 
     background_tasks.add_task(_bg)
     return {"status": "preloading", "seg_idx": seg_idx}
+
+
+@app.get("/api-docs", include_in_schema=False)
+@app.get("/api-docs/", include_in_schema=False)
+def api_docs_page():
+    """Serve the human-oriented frontend integration and API guide."""
+    return FileResponse(FRONTEND_DIR / "api-docs.html")
 
 
 # frontend/ 是上传 demo；守卫一下，frontend 缺失时 import app（测试）也不崩

@@ -68,6 +68,8 @@ Docker 单实例部署已提供 `Dockerfile` 与 `compose.yaml`，包括非 root
 - `POST /api/contracts`  `{text, template_id}` → `{contract_id, total_est_s, segments}`
 - `GET /api/contracts/{id}` · `GET /api/contracts/{id}/segments/{n}`（WAV 为 `audio/wav`，Microsoft MP3 为 `audio/mpeg`）· `POST /api/contracts/{id}/segments/{n}/preload`
 
+服务启动后可打开 http://127.0.0.1:8000/api-docs 查看前端调用流程、预加载策略、参数说明、响应示例与错误码；http://127.0.0.1:8000/docs 提供 Swagger 交互式文档。
+
 当前接受 `template_id=xcash_yue`、`xcash_zh`、`xcash_en`；`xcash` 作为 `xcash_yue` 的兼容别名。Template 会选择独立的切分、归一化、Engine Profile 和缓存身份。详见 `CONTEXT.md` 与 ADR-0001..0009。
 
 ## 测试

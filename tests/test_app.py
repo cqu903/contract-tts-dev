@@ -205,6 +205,35 @@ def test_frontend_initially_requests_three_segments():
     assert "preloadAhead(0, INITIAL_SEGMENT_REQUEST_COUNT - 1);" in source
 
 
+def test_api_docs_page_describes_frontend_flow_and_backend_routes():
+    client = TestClient(appmod.app)
+
+    response = client.get("/api-docs")
+    trailing_slash = client.get("/api-docs/")
+    home = client.get("/")
+
+    assert response.status_code == 200
+    assert trailing_slash.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "这个产品解决什么问题" in response.text
+    assert "从上传文本到播放语音" in response.text
+    assert "上传成功 ≠ 全文语音已生成" in response.text
+    assert "JavaScript / 前端" in response.text
+    assert "Java / Spring" in response.text
+    assert "Spring RestClient" in response.text
+    assert "async function uploadContract" in response.text
+    assert "首屏并行请求 3 段" in response.text
+    assert "播放过程中预取后 3 段" in response.text
+    assert "/api/contracts" in response.text
+    assert "/api/contracts/{contract_id}" in response.text
+    assert "/api/contracts/{contract_id}/segments/{seg_idx}" in response.text
+    assert "/api/contracts/{contract_id}/segments/{seg_idx}/preload" in response.text
+    assert '<span class="method">GET</span>' in response.text
+    assert '<span class="method post">POST</span>' in response.text
+    assert 'href="/docs"' in response.text
+    assert 'href="/api-docs"' in home.text
+
+
 def test_xcash_alias_and_canonical_template_share_new_contract_id(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     client = TestClient(appmod.app)
