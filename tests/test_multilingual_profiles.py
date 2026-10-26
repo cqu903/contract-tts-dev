@@ -527,6 +527,11 @@ def test_make_engine_builds_each_microsoft_language_with_contract_defaults(
     monkeypatch, reading_language, expected_voice
 ):
     monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    monkeypatch.setitem(
+        appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+        reading_language,
+        appmod.MicrosoftReadingLanguageConfig(expected_voice, "+0%"),
+    )
 
     selected = appmod.make_engine("microsoft", reading_language)
 
@@ -539,6 +544,13 @@ def test_make_engine_builds_each_microsoft_language_with_contract_defaults(
 def test_configured_engines_support_a_three_provider_language_mix(monkeypatch):
     monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    monkeypatch.setitem(
+        appmod.MICROSOFT_TTS_LANGUAGE_CONFIGS,
+        "yue",
+        appmod.MicrosoftReadingLanguageConfig(
+            "zh-HK-WanLungNeural", "+0%"
+        ),
+    )
 
     configured = appmod.build_configured_engines(
         {"yue": "microsoft", "zh": "gptsovits", "en": "cosyvoice"}
@@ -582,7 +594,8 @@ def test_microsoft_voice_and_rate_overrides_are_isolated_by_language(monkeypatch
     ("reading_language", "config_field", "configured_value", "error"),
     [
         ("zh", "driver", "", "must be explicitly configured"),
-        ("en", "driver", "azure", "unsupported Microsoft"),
+        ("en", "driver", "sapi", "unsupported Microsoft"),
+        ("en", "driver", "azure", "AZURE_SPEECH_KEY"),
         ("yue", "voice", "", "voice must not be empty"),
         ("zh", "rate", "fast", "integer percentage"),
         ("en", "rate", "+ 5%", "integer percentage"),
@@ -592,6 +605,9 @@ def test_each_selected_microsoft_profile_is_validated_locally(
     monkeypatch, reading_language, config_field, configured_value, error
 ):
     monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", "edge")
+    monkeypatch.setattr(appmod, "AZURE_SPEECH_KEY", "", raising=False)
+    monkeypatch.setattr(appmod, "AZURE_SPEECH_REGION", "", raising=False)
+    monkeypatch.setattr(appmod, "AZURE_SPEECH_ENDPOINT", "", raising=False)
     if config_field == "driver":
         monkeypatch.setattr(appmod, "MICROSOFT_TTS_DRIVER", configured_value)
     else:

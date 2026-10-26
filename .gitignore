@@ -35,6 +35,8 @@ refs/*.mp3
 verify/
 # locally generated TTS previews
 .scratch/**/previews/
+# operator-generated online diagnostic audio
+.scratch/**/diagnostics/
 
 # Real contract texts may contain PII (names, ID numbers, addresses);
 # only the synthetic sample is tracked.

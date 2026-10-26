@@ -151,11 +151,11 @@ def test_invalid_edge_rate_fails_local_configuration(configured):
         normalize_edge_rate(configured)
 
 
-def test_microsoft_provider_requires_explicit_edge_driver_and_nonempty_voice():
+def test_microsoft_provider_requires_a_supported_driver_and_nonempty_voice():
     with pytest.raises(ValueError, match="MICROSOFT_TTS_DRIVER"):
         build_microsoft_provider(driver_name="", voice="voice", rate="+0%")
     with pytest.raises(ValueError, match="unsupported Microsoft TTS driver"):
-        build_microsoft_provider(driver_name="azure", voice="voice", rate="+0%")
+        build_microsoft_provider(driver_name="sapi", voice="voice", rate="+0%")
     with pytest.raises(ValueError, match="voice must not be empty"):
         build_microsoft_provider(driver_name="edge", voice=" ", rate="+0%")
 

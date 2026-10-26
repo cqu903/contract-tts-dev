@@ -1,7 +1,7 @@
 """FastAPI orchestrator for the external multilingual contract-TTS service.
 
 Callers POST a contract TXT + template_id, get back a content-addressed contract_id,
-then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0007.
+then fetch per-segment audio and seek. See CONTEXT.md and docs/adr/0001..0009.
 
 Pipeline: upload → canonical Template lookup → compute_contract_id → store raw text
 and Template metadata → profile-specific deterministic split → profile-specific
@@ -24,7 +24,7 @@ if __package__ in {None, ""}:
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -180,6 +180,9 @@ ENGINE_NAMES = {
     for language in ("yue", "zh", "en")
 }
 MICROSOFT_TTS_DRIVER = os.getenv("MICROSOFT_TTS_DRIVER", "").strip()
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "").strip()
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "").strip()
+AZURE_SPEECH_ENDPOINT = os.getenv("AZURE_SPEECH_ENDPOINT", "").strip()
 
 
 @dataclass(frozen=True)
@@ -258,6 +261,9 @@ def make_engine(name: str | None = None, reading_language: str = "yue"):
             driver_name=MICROSOFT_TTS_DRIVER,
             voice=settings.voice,
             rate=settings.rate,
+            azure_subscription_key=AZURE_SPEECH_KEY,
+            azure_region=AZURE_SPEECH_REGION,
+            azure_endpoint=AZURE_SPEECH_ENDPOINT,
         )
     settings = ENGINE_LANGUAGE_SETTINGS[reading_language]
     if name == "bailian":
@@ -576,6 +582,13 @@ async def preload(contract_id: str, seg_idx: int, background_tasks: BackgroundTa
 
     background_tasks.add_task(_bg)
     return {"status": "preloading", "seg_idx": seg_idx}
+
+
+@app.get("/api-docs", include_in_schema=False)
+@app.get("/api-docs/", include_in_schema=False)
+def api_docs_page():
+    """Serve the human-oriented frontend integration and API guide."""
+    return FileResponse(FRONTEND_DIR / "api-docs.html")
 
 
 # frontend/ 是上传 demo；守卫一下，frontend 缺失时 import app（测试）也不崩

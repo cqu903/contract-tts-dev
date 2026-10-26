@@ -1,0 +1,36 @@
+name: contract-tts
+
+services:
+  contract-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: contract-tts:azure
+    env_file:
+      - .env
+    ports:
+      - "${CONTRACT_TTS_PORT:-8001}:8000"
+    volumes:
+      - contract_tts_cache:/app/cache
+      - contract_tts_uploaded:/app/uploaded
+      - contract_tts_diagnostics:/app/.scratch/microsoft-edge-tts/diagnostics
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  contract_tts_cache:
+  contract_tts_uploaded:
+  contract_tts_diagnostics:

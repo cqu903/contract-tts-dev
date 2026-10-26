@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Contract TTS 产品流程、Java 与 JavaScript 接入指南及后端 API 参考" />
+  <title>Contract TTS · 产品与 API 接入文档</title>
+  <link rel="stylesheet" href="/api-docs.css" />
+  <script type="module" src="/api-docs.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">CT</span>
+      <span class="brand-name">Contract TTS</span>
+    </a>
+    <nav class="top-actions" aria-label="文档快捷入口">
+      <a href="/">打开演示页</a>
+      <a class="primary" href="/docs">交互式 API</a>
+    </nav>
+  </header>
+
+  <div class="shell">
+    <nav class="side-nav" aria-label="文档章节">
+      <strong>产品与接入</strong>
+      <a class="active" href="#overview">概览</a>
+      <a href="#product">产品说明</a>
+      <a href="#pipeline">文本到语音</a>
+      <a href="#quickstart">双语言调用</a>
+      <a href="#flow">开发调用时序</a>
+      <a href="#preload">预加载策略</a>
+      <a href="#endpoints">接口参考</a>
+      <a href="#seek">播放与 Seek</a>
+      <a href="#errors">错误处理</a>
+      <a href="#security">接入边界</a>
+    </nav>
+
+    <main>
+      <section class="hero" id="overview">
+        <p class="eyebrow">Product · Java · JavaScript · REST API · v1</p>
+        <h1>合同朗读服务<br />产品与 API 文档</h1>
+        <p class="lead">
+          一份同时面向产品、Java 开发和前端开发的说明：先讲清楚合同原文如何变成可播放的语音片段，再给出两套完整调用代码，以及每个后端接口的参数、响应和失败语义。
+        </p>
+        <div class="badges">
+          <span class="badge">产品流程</span>
+          <span class="badge">Java / Spring</span>
+          <span class="badge">JavaScript / Browser</span>
+          <span class="badge">粤语 / 普通话 / English</span>
+        </div>
+      </section>
+
+      <section id="product">
+        <p class="eyebrow">01 · Product overview</p>
+        <h2>这个产品解决什么问题</h2>
+        <p class="section-intro">调用方提交一份完整合同，服务把它变成可拖动、可连续播放、可按段复用的朗读体验。调用方不需要自己切文本，也不需要等整份合同全部生成完。</p>
+
+        <div class="audience-grid">
+          <article class="audience-card product">
+            <span class="audience-label">产品看这里</span>
+            <h3>理解用户体验与边界</h3>
+            <p>上传后马上拿到可用时间轴；第一次播放某段可能需要等待生成，已缓存片段会更快；拖动进度条会从目标片段开头播放。</p>
+          </article>
+          <article class="audience-card java">
+            <span class="audience-label">Java 开发看这里</span>
+            <h3>负责业务系统接入</h3>
+            <p>上传合同、保存 <code>contract_id</code>、处理网关认证和错误码，也可以在业务流程中主动预热重要片段。</p>
+          </article>
+          <article class="audience-card frontend">
+            <span class="audience-label">前端开发看这里</span>
+            <h3>负责时间轴与播放器</h3>
+            <p>使用 Segment 索引绘制进度条，通过二进制音频接口获取 Blob，管理浏览器预取、连续播放和 Seek。</p>
+          </article>
+        </div>
+
+        <h3>产品必须知道的四件事</h3>
+        <div class="product-facts">
+          <article><strong>上传成功 ≠ 全文语音已生成</strong><span>上传阶段只保存原文、完成切段并返回时间轴；语音在播放或预热时按段生成。</span></article>
+          <article><strong>Segment 是最小播放单元</strong><span>一次只生成一个短片段，失败不会拖垮整份合同；Seek 也会吸附到片段开头。</span></article>
+          <article><strong>预计时长用于导航</strong><span>进度条在生成音频前即可使用，但预计秒数不等于引擎最终音频的精确秒数。</span></article>
+          <article><strong>语言方案严格隔离</strong><span>同一中文原文选择粤语或普通话，会成为两个不同 Contract，切分、音色和缓存互不混用。</span></article>
+        </div>
+
+        <div class="notice">
+          <strong>文档怎么读</strong>
+          产品优先阅读“产品说明”和“文本到语音”；开发继续阅读“双语言调用”和“接口参考”。<a href="/docs">Swagger</a>用于试调接口，原始 Schema 位于 <a href="/openapi.json">/openapi.json</a>。
+        </div>
+      </section>
+
+      <section id="pipeline">
+        <p class="eyebrow">02 · Text to speech</p>
+        <h2>从上传文本到播放语音</h2>
+        <p class="section-intro">这条链路分成“上传建索引”和“按需生成音频”两个阶段。这样用户不必等待全文合成，系统也只为真正播放的内容付出算力或云端费用。</p>
+
+        <div class="pipeline">
+          <article class="pipeline-step">
+            <span class="pipeline-number">1</span>
+            <div><h3>选择 Template 并上传原文</h3><p>调用方提交完整合同和 <code>template_id</code>。Template 一次确定合同语言、朗读语言、切分、文字处理与 TTS 配置。</p></div>
+          </article>
+          <article class="pipeline-step">
+            <span class="pipeline-number">2</span>
+            <div><h3>生成 Contract 身份并保存原文</h3><p>后端用“规范 Template ID + 原文”计算 <code>contract_id</code>，原文按内容寻址保存。重复上传相同内容会得到相同 ID。</p></div>
+          </article>
+          <article class="pipeline-step">
+            <span class="pipeline-number">3</span>
+            <div><h3>确定性切成 Segment</h3><p>后端按当前语言规则把合同切成短片段，并对每段计算预计时长。切分结果可重复计算，不额外保存一份加工后的合同。</p></div>
+          </article>
+          <article class="pipeline-step emphasis">
+            <span class="pipeline-number">4</span>
+            <div><h3>立即返回可用时间轴</h3><p>上传接口返回 Segment 清单与总预计时长，前端此时就能画进度条和接受 Seek；同时后端在后台预热第 0 段。</p></div>
+          </article>
+          <article class="pipeline-step">
+            <span class="pipeline-number">5</span>
+            <div><h3>播放时才准备 TTS 文本</h3><p>请求某段音频后，后端在合成前一刻处理金额、日期、编号和中英文读法。这个过程只改变送给引擎的文本，不改变合同原文。</p></div>
+          </article>
+          <article class="pipeline-step">
+            <span class="pipeline-number">6</span>
+            <div><h3>先查缓存，未命中才合成</h3><p>相同 Template、最终朗读文本和 Engine Profile 可以复用已有音频；缓存未命中才调用 GPT-SoVITS、CosyVoice 或 Microsoft。</p></div>
+          </article>
+          <article class="pipeline-step">
+            <span class="pipeline-number">7</span>
+            <div><h3>返回完整片段并继续预取</h3><p>后端整段合成成功后返回 WAV 或 MP3。前端播放当前段，同时提前下载后续片段，播放结束后无缝切换。</p></div>
+          </article>
+        </div>
+
+        <h3>核心业务对象</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>对象</th><th>产品含义</th><th>关键特性</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Contract</strong></td><td>调用方上传的一份完整合同</td><td>由原文和 Template 共同确定身份</td></tr>
+              <tr><td><strong>Template</strong></td><td>一套完整的朗读方案</td><td>不是简单语言开关；同时决定切分、读法和引擎配置</td></tr>
+              <tr><td><strong>Segment</strong></td><td>一段可独立生成、缓存和播放的朗读单元</td><td>0-based 下标，是 Seek 和预加载的基本单位</td></tr>
+              <tr><td><strong>Engine Profile</strong></td><td>某种语言实际使用的供应商、音色和合成参数</td><td>变化后自动进入独立缓存空间</td></tr>
+              <tr><td><strong>Audio Cache</strong></td><td>已经生成过的片段音频</td><td>命中时不再访问 TTS，降低等待时间和费用</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="quickstart">
+        <p class="eyebrow">03 · JavaScript + Java</p>
+        <h2>两种开发语言的完整调用</h2>
+        <p class="section-intro">浏览器前端使用 JavaScript Fetch；Java 业务系统示例使用 Java 17 与 Spring Framework 6.1 的 <code>RestClient</code>。两套示例都覆盖上传、查询索引、获取音频和主动预热。</p>
+
+        <div class="code-tabs" data-code-tabs>
+          <div class="code-tab-list" role="tablist" aria-label="选择调用语言">
+            <button class="code-tab active" role="tab" aria-selected="true" aria-controls="javascript-panel" id="javascript-tab" data-tab-target="javascript-panel">JavaScript / 前端</button>
+            <button class="code-tab" role="tab" aria-selected="false" aria-controls="java-panel" id="java-tab" data-tab-target="java-panel">Java / Spring</button>
+          </div>
+
+          <div class="code-tab-panel" role="tabpanel" id="javascript-panel" aria-labelledby="javascript-tab">
+            <div class="code-block tabbed-code">
+              <div class="code-label">JavaScript · Browser Fetch</div>
+              <button class="copy-button" data-copy-target="complete-js">复制</button>
+              <pre><code id="complete-js">const API_BASE = ""; // 同域部署；跨域时填写网关地址
+
+async function readError(response) {
+  try { return (await response.json()).detail; }
+  catch { return `HTTP ${response.status}`; }
+}
+
+async function uploadContract(text, templateId = "xcash_yue") {
+  const response = await fetch(`${API_BASE}/api/contracts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, template_id: templateId }),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json(); // contract_id、template_id、时间轴
+}
+
+async function getContractIndex(contractId) {
+  const response = await fetch(`${API_BASE}/api/contracts/${contractId}`);
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+async function getSegmentAudio(contractId, segIdx) {
+  const response = await fetch(
+    `${API_BASE}/api/contracts/${contractId}/segments/${segIdx}`,
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.blob(); // audio/wav 或 audio/mpeg
+}
+
+async function preloadOnServer(contractId, segIdx) {
+  const response = await fetch(
+    `${API_BASE}/api/contracts/${contractId}/segments/${segIdx}/preload`,
+    { method: "POST" },
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json(); // cached 或 preloading
+}
+
+// 1. 上传并取得时间轴
+const contract = await uploadContract(contractText, "xcash_yue");
+
+// 2. 首屏并行请求 0、1、2；只等待第 0 段进入就绪
+const firstAudio = getSegmentAudio(contract.contract_id, 0);
+for (let i = 1; i &lt; Math.min(3, contract.segments.length); i++) {
+  getSegmentAudio(contract.contract_id, i).catch(console.warn);
+}
+
+// 3. 交给 &lt;audio&gt; 播放
+const blob = await firstAudio;
+audioElement.src = URL.createObjectURL(blob);
+await audioElement.play();</code></pre>
+            </div>
+          </div>
+
+          <div class="code-tab-panel" role="tabpanel" id="java-panel" aria-labelledby="java-tab" hidden>
+            <div class="code-block tabbed-code">
+              <div class="code-label">Java 17 · Spring RestClient</div>
+              <button class="copy-button" data-copy-target="complete-java">复制</button>
+              <pre><code id="complete-java">import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.List;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClient;
+
+public final class ContractTtsClient {
+    private final RestClient http;
+
+    public ContractTtsClient(String baseUrl) {
+        this.http = RestClient.builder().baseUrl(baseUrl).build();
+    }
+
+    public ContractIndex upload(String text, String templateId) {
+        return http.post()
+            .uri("/api/contracts")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(new UploadRequest(text, templateId))
+            .retrieve()
+            .body(ContractIndex.class);
+    }
+
+    public ContractIndex getIndex(String contractId) {
+        return http.get()
+            .uri("/api/contracts/{id}", contractId)
+            .retrieve()
+            .body(ContractIndex.class);
+    }
+
+    public AudioSegment getAudio(String contractId, int segIdx) {
+        ResponseEntity&lt;byte[]&gt; response = http.get()
+            .uri("/api/contracts/{id}/segments/{idx}", contractId, segIdx)
+            .retrieve()
+            .toEntity(byte[].class);
+        return new AudioSegment(
+            response.getBody(),
+            response.getHeaders().getContentType()
+        );
+    }
+
+    public PreloadResult preload(String contractId, int segIdx) {
+        return http.post()
+            .uri("/api/contracts/{id}/segments/{idx}/preload", contractId, segIdx)
+            .retrieve()
+            .body(PreloadResult.class);
+    }
+
+    public record UploadRequest(
+        String text,
+        @JsonProperty("template_id") String templateId
+    ) {}
+
+    public record ContractIndex(
+        @JsonProperty("contract_id") String contractId,
+        @JsonProperty("template_id") String templateId,
+        @JsonProperty("total_est_s") double totalEstimatedSeconds,
+        List&lt;SegmentMeta&gt; segments
+    ) {}
+
+    public record SegmentMeta(
+        @JsonProperty("seg_idx") int segmentIndex,
+        @JsonProperty("est_dur_s") double estimatedDurationSeconds,
+        @JsonProperty("cumulative_start_s") double cumulativeStartSeconds
+    ) {}
+
+    public record AudioSegment(byte[] data, MediaType contentType) {}
+
+    public record PreloadResult(String status,
+        @JsonProperty("seg_idx") int segmentIndex) {}
+}
+
+// 使用示例
+ContractTtsClient client = new ContractTtsClient("http://contract-tts:8000");
+ContractTtsClient.ContractIndex contract = client.upload(contractText, "xcash_yue");
+ContractTtsClient.AudioSegment first = client.getAudio(contract.contractId(), 0);
+client.preload(contract.contractId(), 1);</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="warning">
+          <strong>Java 与浏览器的职责不同</strong>
+          Java 服务通常负责认证后的业务编排、保存 <code>contract_id</code> 和主动暖缓存；浏览器负责 Blob 播放、进度条、连续预取和用户交互。不要让浏览器绕过业务网关直接访问生产 TTS 服务。
+        </div>
+      </section>
+
+      <section id="flow">
+        <p class="eyebrow">04 · Integration sequence</p>
+        <h2>Java、前端与 TTS 服务如何协作</h2>
+        <p class="section-intro">推荐由 Java 业务服务位于网关之后管理合同身份；前端获得业务授权后使用同一套 API 或由 Java 服务代理。时间轴立即返回，音频仍按需生成。</p>
+
+        <div class="flow">
+          <article class="flow-step">
+            <div>
+              <h3>业务系统提交合同</h3>
+              <p>Java 服务完成登录态、权限和业务校验后，调用 <code>POST /api/contracts</code>，提交原文与 Template。</p>
+            </div>
+          </article>
+          <article class="flow-step">
+            <div>
+              <h3>TTS 服务保存原文并返回索引</h3>
+              <p>服务完成内容寻址、切段与时长估算，返回 <code>contract_id</code> 和 Segment 时间轴，并在后台预热第 0 段。</p>
+            </div>
+          </article>
+          <article class="flow-step">
+            <div>
+              <h3>前端建立播放器时间轴</h3>
+              <p>前端使用 <code>total_est_s</code>、<code>cumulative_start_s</code> 和 <code>est_dur_s</code> 绘制进度条，此时不需要等待音频。</p>
+            </div>
+          </article>
+          <article class="flow-step">
+            <div>
+              <h3>浏览器获取首段并并行预取</h3>
+              <p>立即请求第 0、1、2 段，只等待第 0 段进入“就绪”；TTS 服务对缓存未命中的片段执行归一化和合成。</p>
+            </div>
+          </article>
+          <article class="flow-step">
+            <div>
+              <h3>连续播放与后续预取</h3>
+              <p>当前段开始播放后，再提前获取后 3 段；收到 <code>ended</code> 事件时直接复用已下载 Blob 并切换下一段。</p>
+            </div>
+          </article>
+          <article class="flow-step">
+            <div>
+              <h3>用户 Seek 时按段跳转</h3>
+              <p>前端把目标秒数映射到 <code>seg_idx</code>，获取目标音频并从段首播放；已经缓存的片段不会再次调用 TTS。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="preload">
+        <p class="eyebrow">05 · Preloading</p>
+        <h2>预加载策略</h2>
+        <p class="section-intro">系统存在服务端预热和浏览器预取两种机制。两者目的不同，前端接入时不要混为一个接口。</p>
+
+        <div class="grid">
+          <article class="card">
+            <h3>首屏并行请求 3 段</h3>
+            <p>上传成功后，浏览器通过音频 <code>GET</code> 接口同时发起第 0、1、2 段请求；只阻塞等待第 0 段，第 1、2 段留在本地 Promise/Blob 缓冲区。</p>
+          </article>
+          <article class="card">
+            <h3>播放过程中预取后 3 段</h3>
+            <p>开始播放第 N 段后，提前请求 N+1 至 N+3。相同 <code>contract_id + seg_idx</code> 在浏览器内去重，不会重复下载。</p>
+          </article>
+        </div>
+
+        <h3>三层预加载行为</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>时机</th><th>行为</th><th>是否拿到音频</th></tr></thead>
+            <tbody>
+              <tr><td>上传成功时</td><td>后端后台预热第 0 段</td><td>否，只写服务端缓存</td></tr>
+              <tr><td>前端收到索引后</td><td>GET 第 0、1、2 段</td><td>是，保存为浏览器 Blob</td></tr>
+              <tr><td>播放第 N 段时</td><td>GET 后续最多 3 段</td><td>是，供连续播放使用</td></tr>
+              <tr><td>外部系统主动暖缓存</td><td>POST 指定 Segment 的 preload 接口</td><td>否，只返回预热状态</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="warning">
+          <strong>POST preload 不是音频下载接口</strong>
+          它只安排后台合成，返回 <code>preloading</code> 不代表音频已经完成。浏览器实际播放仍应调用 Segment 的 <code>GET</code> 接口；如果 GET 与后台预热并发，服务端会按缓存键去重合成。
+        </div>
+
+        <div class="code-block">
+          <div class="code-label">JavaScript · 浏览器请求去重与向前预取</div>
+          <button class="copy-button" data-copy-target="preload-js">复制</button>
+          <pre><code id="preload-js">const audioRequests = new Map();
+
+function loadSegment(contractId, segIdx) {
+  const key = `${contractId}:${segIdx}`;
+  if (!audioRequests.has(key)) {
+    const request = fetch(
+      `/api/contracts/${contractId}/segments/${segIdx}`,
+    ).then(async (response) =&gt; {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.blob();
+    }).catch((error) =&gt; {
+      audioRequests.delete(key); // 失败可重试
+      throw error;
+    });
+    audioRequests.set(key, request);
+  }
+  return audioRequests.get(key);
+}
+
+// 首屏：等待 0，同时预取 1、2
+const first = loadSegment(contractId, 0);
+for (let i = 1; i &lt; Math.min(3, segments.length); i++) {
+  loadSegment(contractId, i).catch(console.warn);
+}
+const firstBlob = await first;
+
+// 播放 N 时：预取 N+1 ... N+3
+for (let offset = 1; offset &lt;= 3; offset++) {
+  const next = currentSegment + offset;
+  if (next &lt; segments.length) {
+    loadSegment(contractId, next).catch(console.warn);
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section id="endpoints">
+        <p class="eyebrow">06 · Endpoint reference</p>
+        <h2>后端接口参考</h2>
+        <p class="section-intro">所有路径均相对于当前服务地址。JSON 错误响应统一包含 <code>detail</code> 字段。</p>
+
+        <article class="endpoint">
+          <div class="endpoint-title">
+            <span class="method post">POST</span>
+            <h3>/api/contracts</h3>
+          </div>
+          <p>上传一份完整合同、选择处理 Template，并返回可播放的段索引。原文会按内容寻址落盘，服务端同时安排第 0 段后台预热。</p>
+
+          <h4>请求 Body · application/json</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>意义</th></tr></thead>
+              <tbody>
+                <tr><td><code>text</code></td><td>string</td><td><span class="required">是</span></td><td>合同完整原文。至少包含一个可打印的非空白字符；后端不改写原文。原始空格和换行也参与 contract_id 计算。</td></tr>
+                <tr><td><code>template_id</code></td><td>string</td><td><span class="required">是</span></td><td>选择合同语言、朗读语言、切分规则、归一化规则及 TTS Engine Profile。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h4>Template 可选值</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>值</th><th>合同语言</th><th>朗读语言</th><th>备注</th></tr></thead>
+              <tbody>
+                <tr><td><code>xcash_yue</code></td><td>中文</td><td>粤语</td><td>推荐使用的规范 ID</td></tr>
+                <tr><td><code>xcash_zh</code></td><td>中文</td><td>普通话</td><td>独立切分与归一化规则</td></tr>
+                <tr><td><code>xcash_en</code></td><td>英文</td><td>英语</td><td>按英文单词估算时长</td></tr>
+                <tr><td><code>xcash</code></td><td>中文</td><td>粤语</td><td><code>xcash_yue</code> 的兼容别名；响应返回规范 ID</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h4>成功响应 · 200 application/json</h4>
+          <div class="code-block">
+            <div class="code-label">Response</div>
+            <button class="copy-button" data-copy-target="upload-response">复制</button>
+            <pre><code id="upload-response">{
+  "contract_id": "8ddad4...64位sha256...",
+  "template_id": "xcash_yue",
+  "total_est_s": 31.408,
+  "segments": [
+    {
+      "seg_idx": 0,
+      "est_dur_s": 8.108,
+      "cumulative_start_s": 0.0
+    },
+    {
+      "seg_idx": 1,
+      "est_dur_s": 10.811,
+      "cumulative_start_s": 8.108
+    }
+  ]
+}</code></pre>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>响应字段</th><th>类型</th><th>意义</th></tr></thead>
+              <tbody>
+                <tr><td><code>contract_id</code></td><td>string</td><td><code>sha256(canonical template_id + "|" + 原文)</code>，同一原文和 Template 重复上传会得到同一 ID。</td></tr>
+                <tr><td><code>template_id</code></td><td>string</td><td>规范化后的 Template ID；输入 <code>xcash</code> 时返回 <code>xcash_yue</code>。</td></tr>
+                <tr><td><code>total_est_s</code></td><td>number</td><td>所有 Segment 预计朗读秒数之和，不等于已生成音频的精确时长。</td></tr>
+                <tr><td><code>segments</code></td><td>array</td><td>段级时间轴。为了减少 PII 传输，响应不回传每段原文。</td></tr>
+                <tr><td><code>seg_idx</code></td><td>integer</td><td>从 0 开始的 Segment 下标，用于音频与 preload 路径。</td></tr>
+                <tr><td><code>est_dur_s</code></td><td>number</td><td>归一化后朗读文本的预计时长，单位秒。</td></tr>
+                <tr><td><code>cumulative_start_s</code></td><td>number</td><td>该段在合同预计时间轴上的起始秒数。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="endpoint">
+          <div class="endpoint-title">
+            <span class="method">GET</span>
+            <h3>/api/contracts/{contract_id}</h3>
+          </div>
+          <p>重新读取已上传合同并重建确定性的 Segment 索引。用于刷新页面后的索引恢复或服务间查询。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>路径参数</th><th>类型</th><th>意义</th></tr></thead>
+              <tbody><tr><td><code>contract_id</code></td><td>string</td><td>上传接口返回的合同内容寻址 ID。</td></tr></tbody>
+            </table>
+          </div>
+          <p>成功返回 <code>contract_id</code>、<code>total_est_s</code> 和 <code>segments</code>，字段含义同上传响应；此接口当前不重复返回 <code>template_id</code>。</p>
+        </article>
+
+        <article class="endpoint">
+          <div class="endpoint-title">
+            <span class="method">GET</span>
+            <h3>/api/contracts/{contract_id}/segments/{seg_idx}</h3>
+          </div>
+          <p>获取一个完整 Segment 的音频。缓存命中时直接返回；未命中时等待 TTS 整段合成成功后返回。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>路径参数</th><th>类型</th><th>意义</th></tr></thead>
+              <tbody>
+                <tr><td><code>contract_id</code></td><td>string</td><td>上传接口返回的合同 ID。</td></tr>
+                <tr><td><code>seg_idx</code></td><td>integer</td><td>目标 Segment 的 0-based 下标，必须位于 <code>0 ... segments.length - 1</code>。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4>成功响应 · 200 Binary Audio</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Content-Type</th><th>来源</th><th>前端处理</th></tr></thead>
+              <tbody>
+                <tr><td><code>audio/wav</code></td><td>GPT-SoVITS / CosyVoice</td><td rowspan="2">使用 <code>response.blob()</code>，不要按 JSON 或文本解析。</td></tr>
+                <tr><td><code>audio/mpeg</code></td><td>Microsoft Edge / Azure</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>接口返回完整音频文件，不是边生成边流式响应；同一个缓存键的并发冷请求只合成一次。</p>
+        </article>
+
+        <article class="endpoint">
+          <div class="endpoint-title">
+            <span class="method post">POST</span>
+            <h3>/api/contracts/{contract_id}/segments/{seg_idx}/preload</h3>
+          </div>
+          <p>外部调用方可主动预热指定 Segment 的服务端缓存。无需请求 Body。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>路径参数</th><th>类型</th><th>意义</th></tr></thead>
+              <tbody>
+                <tr><td><code>contract_id</code></td><td>string</td><td>上传接口返回的合同 ID。</td></tr>
+                <tr><td><code>seg_idx</code></td><td>integer</td><td>准备后台合成的 0-based Segment 下标。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h4>成功响应 · 200 application/json</h4>
+          <div class="code-block">
+            <div class="code-label">Response variants</div>
+            <pre><code>{ "status": "cached", "seg_idx": 2 }
+{ "status": "preloading", "seg_idx": 2 }</code></pre>
+          </div>
+          <p><code>cached</code> 表示调用时已经命中服务端缓存；<code>preloading</code> 表示任务已安排，但不保证返回时已经合成完成。后台失败只记录服务日志，之后的音频 GET 会重新尝试并返回明确错误。</p>
+        </article>
+      </section>
+
+      <section id="seek">
+        <p class="eyebrow">07 · Playback timeline</p>
+        <h2>播放、进度条与 Seek</h2>
+        <p class="section-intro">预计时间轴在音频生成之前就可用，因此上传成功后可以立即展示并拖动进度条。</p>
+
+        <div class="code-block">
+          <div class="code-label">JavaScript · 秒数映射到 Segment</div>
+          <button class="copy-button" data-copy-target="seek-js">复制</button>
+          <pre><code id="seek-js">function segmentAtSeconds(segments, targetSeconds) {
+  for (const segment of segments) {
+    const end = segment.cumulative_start_s + segment.est_dur_s;
+    if (targetSeconds &lt; end) return segment.seg_idx;
+  }
+  return Math.max(0, segments.length - 1);
+}
+
+const targetSeconds = (rangeValue / 1000) * total_est_s;
+const segIdx = segmentAtSeconds(segments, targetSeconds);
+const blob = await loadSegment(contract_id, segIdx);
+
+audio.src = URL.createObjectURL(blob);
+await audio.play(); // 从目标 Segment 的段首开始</code></pre>
+        </div>
+
+        <div class="warning">
+          <strong>预计时长不是音频精确时长</strong>
+          <code>est_dur_s</code> 用归一化后的文字估算，只用于整份合同的预生成时间轴。实际音频长度会受引擎、音色和语速影响；切段后可使用浏览器音频自身的 <code>currentTime</code> 展示当前段内进度。
+        </div>
+      </section>
+
+      <section id="errors">
+        <p class="eyebrow">08 · Failure semantics</p>
+        <h2>状态码与重试建议</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>状态码</th><th>常见原因</th><th>调用方处理</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status ok">200</span></td><td>请求成功</td><td>按接口定义解析 JSON 或 Audio Blob。</td></tr>
+              <tr><td><span class="status client">400</span></td><td>Template 未知、原文为空或无法切出可读 Segment</td><td>修正请求，不要原样自动重试。</td></tr>
+              <tr><td><span class="status client">404</span></td><td>contract_id 不存在/已过期，或 seg_idx 越界</td><td>必要时重新上传合同并刷新索引。</td></tr>
+              <tr><td><span class="status client">422</span></td><td>缺少 JSON 字段或字段类型错误</td><td>修正请求 Schema。</td></tr>
+              <tr><td><span class="status server">500</span></td><td>本地 TTS 或服务内部错误</td><td>可有限次数退避重试，同时记录 <code>detail</code> 供排障。</td></tr>
+              <tr><td><span class="status server">502</span></td><td>TTS 上游拒绝、限流、超时或合成失败</td><td>指数退避重试；不要自动切换 Provider，以免一份合同混用音色或数据边界。</td></tr>
+              <tr><td><span class="status server">503</span></td><td>Template 已注册，但对应 Engine Profile 未配置</td><td>停止重试并通知运维检查服务端配置。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="code-block">
+          <div class="code-label">Error response</div>
+          <pre><code>{ "detail": "template profile unavailable: xcash_yue" }</code></pre>
+        </div>
+        <p>浏览器缓存中的失败 Promise 会被删除，因此下一次播放或 Seek 可以重新请求。建议限制同时预取数量；CosyVoice 等云端服务可能存在较低的并发或 QPM 配额。</p>
+      </section>
+
+      <section id="security">
+        <p class="eyebrow">09 · Integration boundaries</p>
+        <h2>接入与数据安全边界</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>认证与资源归属</h3>
+            <p>服务本身不实现登录，也不校验调用方是否拥有某个 <code>contract_id</code>。生产接入必须由上游网关完成认证、访问控制、限流和审计。</p>
+          </article>
+          <article class="card">
+            <h3>保护 contract_id</h3>
+            <p><code>contract_id</code> 出现在音频 URL 中，应视为敏感标识。避免写入分析平台、公开日志、Referer 或可分享页面。</p>
+          </article>
+          <article class="card">
+            <h3>合同 PII</h3>
+            <p>原文在服务端默认保留 90 天；音频缓存按最近访问时间保留 30 天。部署时应使用受控持久卷并建立备份、删除和访问策略。</p>
+          </article>
+          <article class="card">
+            <h3>云端 TTS 外发</h3>
+            <p>未缓存 Segment 会把归一化后的合同文字发送给选定供应商。正式生产优先使用组织管理的 Azure Speech 资源，不应把 Edge Driver 描述为企业 Azure 接入。</p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    Contract TTS API Guide · 接口行为以当前服务的 OpenAPI 与实现为准
+  </footer>
+</body>
+</html>

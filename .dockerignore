@@ -1,0 +1,33 @@
+.git
+.agents
+.codegraph
+.idea
+.pytest_cache
+.scratch
+.superpowers
+.venv
+__pycache__
+*.py[cod]
+*.log
+*.zip
+
+# Secrets and local runtime configuration are injected by Compose, never copied.
+.env
+.env.*
+
+# Runtime/PII data lives in Docker volumes.
+cache
+uploaded
+contracts
+verify
+
+# Development-only inputs are not required in the runtime image.
+tests
+debug_samples
+docs
+CLAUDE.md
+CONTEXT.md
+README.md
+conftest.py
+debug_bailian_tts.py
+debug_singapore_tts_idea.py

@@ -1,6 +1,6 @@
 # Microsoft / Edge TTS 正式引擎
 
-Status: ready-for-agent
+Status: implemented
 
 ## Problem Statement
 
@@ -125,3 +125,14 @@ Edge Driver 保留上游原生 MP3，不转码。合成结果、HTTP 响应和 S
 - 当前 Edge 输出按上游能力保留为 24 kHz、48 kbps、单声道 MP3；如果未来上游或 Driver 支持其他输出格式，格式必须继续由 Audio Artifact 和 synthesis fingerprint 显式表达。
 - 引入 `edge-tts` 时应按项目常规完成依赖锁定与许可证清单更新；依赖升级属于显式发布动作，不应静默改变缓存身份或合成结果。
 - 规格已具备实现状态。下一步可使用 `to-tickets` 按依赖顺序拆分为 Audio Artifact/缓存基础、Microsoft Provider 与 Edge Driver、应用接线、诊断与运维文档等实现票据。
+
+## Subsequent Azure Production Extension (2026-08-17)
+
+本规格的原始 “Out of Scope” 只约束首个 Edge 实现阶段。随后经明确需求确认，正式 Azure Speech 已作为同一个 `microsoft` Provider 下的 `azure` Driver 实现；它不是新的并列 Provider，Template、Reading Language、合同 API、Audio Artifact 和错误契约保持不变。
+
+- Azure Driver 使用官方 `azure-cognitiveservices-speech` SDK，通过 `AZURE_SPEECH_KEY` 加 `AZURE_SPEECH_REGION`，或 Key 加 HTTPS `AZURE_SPEECH_ENDPOINT` 连接组织管理的 Speech 资源。
+- 三语言继续复用 Microsoft voice/rate 配置；Driver 使用 SSML prosody 应用 rate，并请求 24 kHz、48 kbps、单声道 MP3。预计时长和前端进度条模型仍不调整。
+- Azure 的 Driver、voice、rate、Region、Endpoint、输出格式、SDK 与 adapter 版本进入 synthesis fingerprint；Key 不进入 fingerprint、日志、缓存或错误详情。Edge 与 Azure 缓存自动隔离。
+- 启动阶段仍只做本地配置校验，不进行联网 readiness 检测。通用三语言诊断命令根据当前 Driver 做真实合成；默认测试用 fake SDK 验证 Azure 边界，不访问云服务。
+- 未缓存 Azure Segment 失败时返回脱敏后的 `502`，不自动切换 Edge、GPT-SoVITS 或 CosyVoice；已有匹配缓存照常返回。
+- 运维文档分别记录 Edge 与 Azure 的合同文本外发、凭据、Region/Endpoint、配额、服务条款、依赖许可证及从 Edge 切换到 Azure 的验收步骤。

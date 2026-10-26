@@ -26,7 +26,7 @@ _Avoid_: format, layout, language flag（Template 不是单纯版式，也不是
 音频实际使用的口语语言，例如粤语、普通话或英语。每个 Template 只对应一种 Reading Language；需要另一种朗读语言时使用另一个 Template。
 
 **Engine Profile**（引擎配置）
-一套会共同决定音频结果的完整 TTS 配置，包含稳定的 Engine Provider、具体 Driver、语言、模型、音色、合成参数、音频格式和独立缓存版本。Provider 是 Template 与运维配置依赖的稳定身份；Provider 内可以替换 Driver，例如 `microsoft` 当前使用 Edge 在线 TTS Driver，未来可换成正式 Azure Speech Driver，而不改变上层 Template 接口。
+一套会共同决定音频结果的完整 TTS 配置，包含稳定的 Engine Provider、具体 Driver、语言、模型、音色、合成参数、音频格式和独立缓存版本。Provider 是 Template 与运维配置依赖的稳定身份；同一 Provider 可以提供多个具有不同服务边界的 Driver，而不改变上层 Template 接口。
 每个 Template 绑定一个 Engine Profile。某个 Engine Profile 内任何影响音频结果的配置发生变化时，只提升该 Engine Profile 的缓存版本，不影响其他 Engine Profile 的缓存。
 单个服务实例必须同时注册并支持全部 Engine Profile；服务按每次请求所属的 Template 动态选择对应配置，不通过重启进程或修改全局环境变量来切换语言。
 

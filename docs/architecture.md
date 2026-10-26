@@ -1,6 +1,6 @@
 # 架构说明(as-built,对外服务)
 
-> 本文描述**当前真实实现**(代码为准)。设计决策见 `docs/adr/`(ADR-0001..0008)+ `CONTEXT.md`(领域语言)。
+> 本文描述**当前真实实现**(代码为准)。设计决策见 `docs/adr/`(ADR-0001..0009)+ `CONTEXT.md`(领域语言)。
 
 ## 0. 一句话
 
@@ -20,29 +20,30 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 按需逐段归一化(按 Template 选择 normalizer)      只在某段将要合成时执行,不批量
   │  显示文本 = 原始段文本(不回传调用方);归一化文本只喂引擎
   ▼
-缓存键 sha256(Template + 归一化文本 + Engine Profile + 版本)   (ADR-0008)
-  ├── 命中 → Response 回放 wav
+缓存键 sha256(Template + 归一化文本 + Engine Profile + 版本 + 合成指纹)   (ADR-0008/0009)
+  ├── 命中 → Response 回放格式感知的 Audio Artifact
   └── 未命中 → engine.synth (§5) → 落缓存 → 回传
 ```
 
-要点:**归一化不是批量预处理**,而是合成前一刻对单段执行;切片结果不持久化;持久化产物是 `uploaded/*.txt`(原文,90d)与 `cache/*.wav`(音频,30d 滑动窗口)。
+要点:**归一化不是批量预处理**,而是合成前一刻对单段执行;切片结果不持久化;持久化产物是 `uploaded/*.txt`(原文,90d)与 `cache/*.{wav,mp3}`(音频,30d 滑动窗口)。
 
-## 1. 拓扑(两进程 + 磁盘存储/缓存 + 浏览器)
+## 1. 拓扑(后端 + 可配置 Provider + 磁盘存储/缓存 + 浏览器)
 
 ```
-┌──────────┐  HTTP   ┌────────────────────┐   HTTP    ┌──────────────────┐
-│ 浏览器    │───────▶│ FastAPI 后端        │─────────▶│ GPT-SoVITS 引擎   │
-│ HTML/JS  │◀───────│ py3.12 / :8000      │◀─────────│ api_v2.py :9880   │
-│ +<audio> │ 音频    │ 上传/切片/归一化/    │  音频     │ py3.10, CPU       │
-└──────────┘         │ 缓存/seek 映射       │           │ text_lang=yue     │
-                     └────────────────────┘           └──────────────────┘
-       磁盘: uploaded/<cid>.txt(原文) + cache/<sha256>.wav + manifest.json
+┌──────────┐  HTTP   ┌────────────────────┐   引擎协议   ┌──────────────────────────┐
+│ 浏览器    │───────▶│ FastAPI 后端        │───────────▶│ GPT-SoVITS（本地）         │
+│ HTML/JS  │◀───────│ py3.12 / :8000      │◀───────────│ CosyVoice（云端）           │
+│ +<audio> │ 音频    │ 上传/切片/归一化/    │    音频     │ Microsoft Edge/Azure（云端）│
+└──────────┘         │ 缓存/seek 映射       │            └──────────────────────────┘
+                     └────────────────────┘
+       磁盘: uploaded/<cid>.txt(原文) + cache/<sha256>.<format> + manifest.json
 ```
 
-- **引擎进程**:本地 GPT-SoVITS 仓库(独立 py3.10 venv,安装见 `docs/engine-setup.md`),常驻 `api_v2.py`,暴露 `POST /tts`。
+- **Engine Provider**:按 Reading Language 选择 GPT-SoVITS、CosyVoice 或稳定的 Microsoft Provider；Microsoft Provider 内再显式选择 Edge/Azure Driver。只有 GPT-SoVITS 需要本地独立引擎进程。
+- **GPT-SoVITS 引擎进程**:本地 GPT-SoVITS 仓库(独立 py3.10 venv,安装见 `docs/engine-setup.md`),常驻 `api_v2.py`,暴露 `POST /tts`。
 - **后端进程**:本项目 py3.12 venv,`uvicorn backend.app:app --port 8000`。
 - **存储**:`uploaded/`(原文,gitignored)、`cache/`(音频,gitignored)。
-- 浏览器与后端走 `:8000`;后端调引擎走 `:9880`(`httpx trust_env=False`,绕过本机 clash 代理)。
+- 浏览器与后端走 `:8000`;GPT-SoVITS 使用 `:9880`(`httpx trust_env=False`,绕过本机 clash 代理)，CosyVoice 与 Microsoft Driver 使用出站云服务连接。
 
 ## 2. 一次 seek 的完整时序
 
@@ -63,9 +64,9 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
   │                                          是           否
   │                                          │            加锁(_synth_and_cache) → 二次查
   │                                          │            仍 miss → engine.synth → cache.put
-  │                                          ◀── Response(200, audio/wav) ──────────┘
-  │                                          引擎 HTTP 错 → 502;连接失败/其它 → 500
-浏览器拿到 wav blob → SegmentAudioBuffer 保存 → audio.src = blob → 播放
+  │                                          ◀── Response(200, artifact.media_type) ┘
+  │                                          Microsoft 上游失败 → 502;其它引擎按 adapter 语义映射
+浏览器拿到音频 blob → SegmentAudioBuffer 保存 → audio.src = blob → 播放
   │ 同时 GET /api/contracts/{id}/segments/{seg_idx+1..+k} → 下载并保存后面 K 段 blob
   ▼ 播完该段 → "ended" → 直接复用已下载 blob → 自动 playFrom(seg_idx+1)
 ```
@@ -80,23 +81,24 @@ POST /api/contracts {text, template_id}      (xcash_yue / xcash_zh / xcash_en; x
 
 ## 4. 音频缓存逻辑(内容寻址,`cache.py`)
 
-- **key** = `sha256(canonical Template ID + 归一化段文本 + Engine Profile ID + profile cache version)`。只有四项都相同才允许跨 Contract 复用；换 Template、引擎 profile 或版本都不会命中旧音频(ADR-0008)。
+- **key** = `sha256(canonical Template ID + 归一化段文本 + Engine Profile ID + profile cache version + synthesis fingerprint)`。只有完整身份都相同才允许跨 Contract 复用；换 Template、引擎 profile、版本、Driver、音色、语速或格式都不会命中旧音频(ADR-0008/0009)。
 - 命中(`cache.get`)→ 回放文件;`get` 命中时刷新 `last_access_at`。
 - 未命中 → 生成、`cache.put`、回传。
 - **并发去重**:`_synth_and_cache` 用 per-key `asyncio.Lock` + 进锁后二次查缓存,同一未命中段的并发请求只生成一次。
 - **静态内容自动复用**:合同的静态 boilerplate 在所有合同里文本相同 → 同 key → 一处生成、处处复用(等价免费"预生成")。
 - **淘汰**(ADR-0004):30 天滑动窗口——`last_access_at` 超 30 天的条目由 `evict_expired` 删(命中即续期)。**清理触发**(ADR-0007):服务启动清一次 + 进程内 asyncio 周期任务每天 1 次(`run_cleanup()`,原文 90d + 音频 30d 合并;evict 同步直调、阻塞 ~27ms/天,故意的——见 ADR-0007)。
-- 存储:`cache/<sha256>.wav` + `cache/manifest.json`(key → `{created_at, last_access_at, duration}`)。
+- 存储:`cache/<sha256>.<format>` + `cache/manifest.json`；manifest 同时记录时间、duration、canonical `audio_format`、`media_type` 和 `file_extension`，只有三项格式元数据完全一致的非空文件才会命中。
 
-## 5. TTS 生成逻辑(`gptsovits_client.py` / `bailian_cosyvoice_client.py` / `app.py`)
+## 5. TTS 生成逻辑(`gptsovits_client.py` / `bailian_cosyvoice_client.py` / `microsoft_tts.py` / `app.py`)
 
 - 段文本先经当前 Template 的 normalizer（`normalize_for_tts`、`normalize_for_tts_zh` 或 `normalize_for_tts_en`）→ `tts_text`。
-- 本地 GPT-SoVITS 为三个 Template 分别使用 `text_lang=yue/zh/en`；目标语言与参考音 `prompt_lang` 分离，普通话和英语默认复用粤语参考音进行跨语言合成，也可配置原生参考音。云端 Bailian 为三个 Template 分别绑定 `BAILIAN_VOICE`、`BAILIAN_VOICE_ZH` 和 `BAILIAN_VOICE_EN`。
-- `engine.synth(tts_text)` 的两个 client 接口统一为异步字节流；本地 GPT-SoVITS 发送语言参数，云端 Bailian 发送 profile voice。引擎返回**整段 WAV**。
-- **生成后响应**:`get_segment` 先把整段字节收齐再 `Response(200, audio/wav)`——**不是 tee 边生成边回传**。引擎失败能回明确错误(`httpx.HTTPStatusError → 502`;连接失败/其它 `→ 500`),不会被浏览器吞成模糊的 `Load failed`。
+- 本地 GPT-SoVITS 为三个 Template 分别使用 `text_lang=yue/zh/en`；目标语言与参考音 `prompt_lang` 分离，普通话和英语默认复用粤语参考音进行跨语言合成，也可配置原生参考音。云端 Bailian 为三个 Template 分别绑定 `BAILIAN_VOICE`、`BAILIAN_VOICE_ZH` 和 `BAILIAN_VOICE_EN`。Microsoft Provider 为三个 Reading Language 分别绑定 voice/rate，并在内部选择 Edge 或 Azure Driver。
+- 所有 Provider 的 `engine.synth(tts_text)` 接口统一为异步字节流，并显式声明 canonical `audio_format` 和 `synthesis_fingerprint`。GPT-SoVITS 与 CosyVoice 形成 WAV Audio Artifact；Microsoft Edge/Azure 形成 MP3 Audio Artifact。
+- **生成后响应**:`get_segment` 先把整段字节收齐并形成 Audio Artifact，再按其 media type 返回——**不是 tee 边生成边回传**。Microsoft 上游失败统一映射为 `502` 且不自动回退；其它 Provider 保持各自现有错误语义。
 - **音色一致**:每个 Engine Profile 固定自己的参考音或云端 voice；同一 Template 任意 seek 顺序、缓存命中或新生成都使用同一音色。
-- **引擎按语言切换**：`CONTRACT_TTS_ENGINE` 是兼容回退值，`CONTRACT_TTS_ENGINE_YUE/ZH/EN` 可让每个 Template profile 独立选择 `gptsovits` 或 `cosyvoice`（内部规范化为 `bailian` adapter）。两个 adapter 的 `synth(text)->AsyncIterator[bytes]` **同构**，§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、按语言选出的 Engine Profile ID 和独立 cache version；只切一种语言的引擎会自动进入新的缓存命名空间。
+- **引擎按语言切换**：`CONTRACT_TTS_ENGINE` 是兼容回退值，`CONTRACT_TTS_ENGINE_YUE/ZH/EN` 可让每个 Template profile 独立选择 `gptsovits`、`cosyvoice`（内部规范化为 `bailian` adapter）或 `microsoft`。三个 Provider 的合成接口同构，§6 归一化、§3 seek、§4 缓存全部共用。缓存键使用 Template、归一化文本、按语言选出的 Engine Profile ID、独立 cache version 和 synthesis fingerprint；只切一种语言的 Provider、Driver 或合成配置会自动进入新的缓存命名空间。
   - 云端 client(`bailian_cosyvoice_client.py`)内部有两个 adapter：`BAILIAN_TRANSPORT=http` 时 POST `SpeechSynthesizer` 取得 audio URL 后下载；`BAILIAN_TRANSPORT=wss` 时通过 DashScope SDK 调用 WebSocket TTS，并在线程中执行同步 SDK 以免阻塞事件循环。`DASHSCOPE_API_KEY` 必须设置；端点、模型、音色与 Key 必须属于同一地域。云端引擎**不需参考音**。
+  - Microsoft Provider(`microsoft_tts.py`)内部有 Edge 与 Azure Driver：Edge 使用第三方 `edge-tts`；Azure 使用官方 Speech SDK、正式资源 Key 和 Region 或 HTTPS Endpoint。两个 Driver 都输出 MP3、失败不互相切换，具体数据边界和验收步骤见 `docs/running.md`。
   - **TN 边界(关键)**:云端 cosyvoice 的自动 TN 只覆盖日期、基础金额→数值;**逐位(电话/身份证/型号)、`HK$→港幣`、罗马序号仍靠 §6 归一化**(实测云端会把这些读错)。所以**云端路径不能省 `normalizer.py`**,与本地同构。
 
 ## 6. 文本归一化(关键一层,`normalizer.py` / `normalizers.py`,依赖 `cn2an`)
