@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "取段音频调用链（多引擎路由 · 缓存未命中）",
+    "locale": "zh-CN",
+    "output": ".archify/sequence-multi-engine-20261026-111501/segment-audio-multi-engine.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/cqu903/contract-tts-dev.git",
+      "provider": "github",
+      "revision": "1477dc6e2f347d3dae247cce9aee8c5790b14d63"
+    },
+    "legend": {
+      "entries": {
+        "dashed": { "label": "备选引擎路径（按绑定三选一）" }
+      }
+    }
+  },
+  "participants": [
+    { "id": "caller", "type": "external", "label": "调用方", "sublabel": "浏览器 / 集成方" },
+    { "id": "api", "type": "backend", "label": "FastAPI 服务", "sublabel": "get_segment", "sources": [
+      { "path": "backend/app.py", "line": 172, "end_line": 181, "label": "按语言选引擎（env）" },
+      { "path": "backend/app.py", "line": 464, "end_line": 486, "label": "_synth_and_cache" },
+      { "path": "backend/app.py", "line": 544, "end_line": 563, "label": "GET segments/{i}" }
+    ] },
+    { "id": "store", "type": "database", "label": "契约存储", "sublabel": "ContractStore", "sources": [
+      { "path": "backend/storage/contract.py", "line": 62, "end_line": 76, "label": "build_index" },
+      { "path": "backend/storage/contract.py", "line": 118, "end_line": 152, "label": "ContractStore" }
+    ] },
+    { "id": "cache", "type": "database", "label": "段音频缓存", "sublabel": "SegmentCache", "sources": [
+      { "path": "backend/storage/cache.py", "line": 22, "end_line": 40, "label": "cache_key" },
+      { "path": "backend/storage/cache.py", "line": 88, "end_line": 115, "label": "has / get / put" }
+    ] },
+    { "id": "gptsovits", "type": "external", "label": "GPT-SoVITS", "sublabel": "本地 :9880 · WAV", "sources": [
+      { "path": "backend/engines/gptsovits_client.py", "line": 40, "end_line": 62, "label": "synth → POST /tts" }
+    ] },
+    { "id": "bailian", "type": "cloud", "label": "百炼 CosyVoice", "sublabel": "DashScope · WAV", "sources": [
+      { "path": "backend/engines/bailian_cosyvoice_client.py", "line": 74, "end_line": 121, "label": "synth / _synth_http" }
+    ] },
+    { "id": "microsoft", "type": "cloud", "label": "Microsoft TTS", "sublabel": "edge / Azure · MP3", "sources": [
+      { "path": "backend/engines/microsoft_tts.py", "line": 123, "end_line": 150, "label": "EdgeTTSDriver.synth" },
+      { "path": "backend/engines/microsoft_tts.py", "line": 258, "end_line": 271, "label": "AzureSpeechDriver.synth" },
+      { "path": "backend/engines/microsoft_tts.py", "line": 301, "end_line": 330, "label": "build_microsoft_provider" }
+    ] }
+  ],
+  "segments": [
+    { "from": 150, "to": 288, "label": "定位段落" },
+    { "from": 292, "to": 420, "label": "查缓存" },
+    { "from": 426, "to": 712, "label": "合成（未命中 · 引擎三选一）" },
+    { "from": 714, "to": 810, "label": "回写与响应" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "caller", "to": "api", "y": 160, "label": "GET /segments/{seg_idx}", "variant": "emphasis", "note": "contract_id 来自上传响应；未知合同 / 段越界 → 404" },
+    { "id": "m2", "from": "api", "to": "store", "y": 210, "label": "读原文 + template_id", "note": "template → Profile → 该模板绑定的引擎" },
+    { "id": "m3", "from": "store", "to": "api", "y": 268, "label": "合同文本", "variant": "return" },
+    { "id": "m4", "from": "api", "to": "cache", "y": 296, "label": "get(cache_key)", "note": "先归一化再算 key；key 含引擎身份" },
+    { "id": "m5", "from": "cache", "to": "api", "y": 368, "label": "miss", "variant": "return", "note": "命中直接返回缓存字节（毫秒级）" },
+    { "id": "m6", "from": "api", "to": "gptsovits", "y": 430, "label": "synth → POST /tts（WAV 流）", "variant": "emphasis", "note": "默认绑定；启动时按朗读语言（yue/zh/en）与 CONTRACT_TTS_ENGINE_<lang> 实例化；zh 文本先 OpenCC 转简体" },
+    { "id": "m7", "from": "gptsovits", "to": "api", "y": 502, "label": "WAV 字节流（逐块）", "variant": "return" },
+    { "id": "m8", "from": "api", "to": "bailian", "y": 530, "label": "synth → DashScope TTS（WAV）", "variant": "dashed", "note": "绑定 bailian 时（需 DASHSCOPE_API_KEY）：HTTP 两段式（合成 → GET audio.url）或 WSS SDK" },
+    { "id": "m9", "from": "bailian", "to": "api", "y": 602, "label": "WAV 字节", "variant": "dashed" },
+    { "id": "m10", "from": "api", "to": "microsoft", "y": 630, "label": "synth → SSML edge / Azure（MP3）", "variant": "dashed", "note": "绑定 microsoft 时（MICROSOFT_TTS_DRIVER=edge|azure）" },
+    { "id": "m11", "from": "microsoft", "to": "api", "y": 690, "label": "MP3 字节", "variant": "dashed" },
+    { "id": "m12", "from": "api", "to": "cache", "y": 718, "label": "put(key, AudioArtifact)", "variant": "default" },
+    { "id": "m13", "from": "api", "to": "caller", "y": 746, "label": "200 audio/wav 或 audio/mpeg（整段）", "variant": "return", "note": "相同段再请求（seek / 重播）直接命中缓存" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 160, "to": 754, "type": "backend" },
+    { "participant": "store", "from": 205, "to": 274, "type": "database" },
+    { "participant": "cache", "from": 290, "to": 374, "type": "database" },
+    { "participant": "gptsovits", "from": 425, "to": 508, "type": "external" },
+    { "participant": "bailian", "from": 525, "to": 608, "type": "cloud" },
+    { "participant": "microsoft", "from": 625, "to": 696, "type": "cloud" },
+    { "participant": "cache", "from": 713, "to": 725, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "命中路径（常态）", "items": [
+      "缓存 key 内容寻址：同模板同段跨合同复用",
+      "key 含引擎 Profile 与合成指纹，不同引擎互不脏读",
+      "命中毫秒级返回，不触引擎"
+    ] },
+    { "dot": "emerald", "title": "未命中路径", "items": [
+      "per-key asyncio.Lock，拿锁后二次查缓存，防并发重复合成",
+      "整段收齐 → AudioArtifact 一次写入，引擎失败回明确 502"
+    ] },
+    { "dot": "violet", "title": "引擎路由（三选一）", "items": [
+      "模板 → 朗读语言（yue / zh / en）→ 启动时按 CONTRACT_TTS_ENGINE_<lang> 绑定引擎实例",
+      "gptsovits 恒可用；bailian 需 DASHSCOPE_API_KEY；microsoft 需 MICROSOFT_TTS_DRIVER",
+      "三适配器同构 synth(text) → AsyncIterator[bytes]，产出 WAV / WAV / MP3"
+    ] },
+    { "dot": "rose", "title": "失败语义", "items": [
+      "模板不可用（如缺 API key）→ 上传 503 / 取段 404",
+      "引擎失败 → 502；其他异常 → 500；不边生成边流，避免空 200"
+    ] }
+  ]
+}

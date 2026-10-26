@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "b90283c0-32b1-4928-8164-8dbf408cefd8",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/candidate.json",
+  "output": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.html",
+  "specification": {
+    "sha256": "42dac804f221ab92a2879995a55e15aa1563237ad920fbcda19df3462a01e5be",
+    "bytes": 7622
+  },
+  "artifact": {
+    "sha256": "059c26fe6093fa14ffa7e87c43b8cbe9f8fdc33ab506f107823d17c4b23b3dc3",
+    "bytes": 859722
+  }
+}

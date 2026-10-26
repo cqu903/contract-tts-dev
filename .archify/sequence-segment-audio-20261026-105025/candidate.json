@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "取段音频调用链（缓存未命中）",
+    "locale": "zh-CN",
+    "output": ".archify/sequence-segment-audio-20261026-105025/segment-audio-sequence.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/cqu903/contract-tts-dev.git",
+      "provider": "github",
+      "revision": "1477dc6e2f347d3dae247cce9aee8c5790b14d63"
+    }
+  },
+  "participants": [
+    { "id": "caller", "type": "external", "label": "调用方", "sublabel": "浏览器 / 集成方" },
+    { "id": "api", "type": "backend", "label": "FastAPI 服务", "sublabel": "get_segment", "sources": [
+      { "path": "backend/app.py", "line": 544, "end_line": 563, "label": "GET segments/{i}" },
+      { "path": "backend/app.py", "line": 464, "end_line": 486, "label": "_synth_and_cache" }
+    ] },
+    { "id": "store", "type": "database", "label": "契约存储", "sublabel": "ContractStore + build_index", "sources": [
+      { "path": "backend/storage/contract.py", "line": 62, "end_line": 76, "label": "build_index" },
+      { "path": "backend/storage/contract.py", "line": 118, "end_line": 152, "label": "ContractStore" }
+    ] },
+    { "id": "cache", "type": "database", "label": "段音频缓存", "sublabel": "SegmentCache", "sources": [
+      { "path": "backend/storage/cache.py", "line": 22, "end_line": 40, "label": "cache_key" },
+      { "path": "backend/storage/cache.py", "line": 88, "end_line": 115, "label": "has / get / put" }
+    ] },
+    { "id": "engine", "type": "external", "label": "GPT-SoVITS", "sublabel": "本地 :9880（默认引擎）", "sources": [
+      { "path": "backend/engines/gptsovits_client.py", "line": 40, "end_line": 62, "label": "synth → POST /tts" }
+    ] }
+  ],
+  "segments": [
+    { "from": 150, "to": 296, "label": "定位段落" },
+    { "from": 300, "to": 424, "label": "查缓存" },
+    { "from": 428, "to": 544, "label": "合成（未命中）" },
+    { "from": 552, "to": 645, "label": "回写与响应" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "caller", "to": "api", "y": 160, "label": "GET /segments/{seg_idx}", "variant": "emphasis", "note": "contract_id 来自上传响应；未知合同 / 段越界 → 404" },
+    { "id": "m2", "from": "api", "to": "store", "y": 220, "label": "读原文 + template_id", "note": "按模板 Profile 选取切片与归一化规则" },
+    { "id": "m3", "from": "store", "to": "api", "y": 278, "label": "合同文本", "variant": "return" },
+    { "id": "m4", "from": "api", "to": "cache", "y": 306, "label": "get(cache_key)", "note": "先归一化（数字 / 日期 / 金额 → 读法）再算 key；key 含模板、归一化文本、引擎 Profile、缓存版本、合成指纹" },
+    { "id": "m5", "from": "cache", "to": "api", "y": 375, "label": "miss", "variant": "return", "note": "命中时直接返回缓存字节（毫秒级）" },
+    { "id": "m6", "from": "api", "to": "engine", "y": 433, "label": "synth(归一化文本)", "variant": "emphasis", "note": "POST /tts 流式拉取（trust_env=False 直连）" },
+    { "id": "m7", "from": "engine", "to": "api", "y": 491, "label": "WAV 字节流（逐块）", "variant": "return", "note": "整段收齐后才响应：失败回明确 502，不给空 200" },
+    { "id": "m8", "from": "api", "to": "cache", "y": 556, "label": "put(key, AudioArtifact)", "variant": "dashed" },
+    { "id": "m9", "from": "api", "to": "caller", "y": 584, "label": "200 audio/wav（整段）", "variant": "return", "note": "相同段再请求（seek / 重播）直接命中缓存" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 160, "to": 592, "type": "backend" },
+    { "participant": "store", "from": 215, "to": 284, "type": "database" },
+    { "participant": "cache", "from": 300, "to": 381, "type": "database" },
+    { "participant": "engine", "from": 428, "to": 497, "type": "external" },
+    { "participant": "cache", "from": 551, "to": 563, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "命中路径（常态）", "items": [
+      "缓存 key 内容寻址：同模板同段跨合同复用",
+      "命中毫秒级返回，不触引擎"
+    ] },
+    { "dot": "emerald", "title": "未命中路径", "items": [
+      "per-key asyncio.Lock，拿锁后二次查缓存，防并发重复合成",
+      "整段收齐 → AudioArtifact(bytes, WAV) 一次写入"
+    ] },
+    { "dot": "rose", "title": "失败语义", "items": [
+      "引擎 HTTP 失败 / 合成错误 → 502",
+      "其他异常 → 500；不边生成边流，避免空 200"
+    ] },
+    { "dot": "violet", "title": "可替换引擎", "items": [
+      "百炼 CosyVoice（DashScope HTTP/WSS）与 Microsoft TTS（edge / Azure）同构适配",
+      "引擎身份与合成指纹都在缓存 key 内，切换不脏读"
+    ] }
+  ]
+}

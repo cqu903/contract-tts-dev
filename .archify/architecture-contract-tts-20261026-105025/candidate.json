@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "contract-tts 服务高层架构",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/cqu903/contract-tts-dev.git",
+      "provider": "github",
+      "revision": "1477dc6e2f347d3dae247cce9aee8c5790b14d63"
+    }
+  },
+  "components": [
+    { "id": "caller", "type": "external", "label": "调用方", "sublabel": "外部系统 / 浏览器", "pos": [40, 280], "size": [130, 60] },
+    { "id": "registry", "type": "backend", "label": "模板注册表", "sublabel": "backend/templates.py", "tag": "xcash_yue / zh / en", "pos": [380, 110], "size": [150, 60], "sources": [
+      { "path": "backend/templates.py", "line": 69, "end_line": 79, "label": "TemplateProfile" },
+      { "path": "backend/templates.py", "line": 112, "end_line": 156, "label": "build_template_registry" }
+    ] },
+    { "id": "text", "type": "backend", "label": "文本管线", "sublabel": "backend/text/", "tag": "切片 · 归一化 · 时长估算", "pos": [580, 110], "size": [170, 60], "sources": [
+      { "path": "backend/text/segmenter.py", "line": 85, "label": "split_contract" },
+      { "path": "backend/text/normalizer.py", "line": 103, "label": "normalize_for_tts" }
+    ] },
+    { "id": "svc", "type": "backend", "label": "FastAPI 服务", "sublabel": "backend/app.py · uvicorn :8000", "tag": "REST + 静态托管", "pos": [430, 280], "size": [170, 88], "sources": [
+      { "path": "backend/app.py", "line": 515, "end_line": 535, "label": "POST /api/contracts" },
+      { "path": "backend/app.py", "line": 544, "end_line": 563, "label": "GET segments/{i}" },
+      { "path": "backend/app.py", "line": 566, "end_line": 584, "label": "POST preload" }
+    ] },
+    { "id": "contract-store", "type": "database", "label": "契约原文存储", "sublabel": "uploaded/<cid>.txt · 90d TTL", "pos": [280, 470], "size": [160, 60], "sources": [
+      { "path": "backend/storage/contract.py", "line": 28, "end_line": 35, "label": "compute_contract_id" },
+      { "path": "backend/storage/contract.py", "line": 118, "end_line": 152, "label": "ContractStore" }
+    ] },
+    { "id": "segment-cache", "type": "database", "label": "段音频缓存", "sublabel": "cache/ · 30d 滑动窗口", "pos": [560, 470], "size": [150, 60], "sources": [
+      { "path": "backend/storage/cache.py", "line": 22, "end_line": 40, "label": "cache_key" },
+      { "path": "backend/storage/cache.py", "line": 43, "end_line": 60, "label": "SegmentCache" }
+    ] },
+    { "id": "cleanup", "type": "backend", "label": "过期清理任务", "sublabel": "启动 + 每 24h", "tag": "原文 90d · 音频 30d", "pos": [460, 620], "size": [150, 56], "sources": [
+      { "path": "backend/app.py", "line": 347, "end_line": 364, "label": "run_cleanup / 周期任务" },
+      { "path": "backend/app.py", "line": 367, "end_line": 379, "label": "lifespan" }
+    ] },
+    { "id": "frontend", "type": "frontend", "label": "演示前端", "sublabel": "frontend/ · StaticFiles", "tag": "index / mobile H5 / api-docs", "pos": [250, 620], "size": [150, 56], "sources": [
+      { "path": "backend/app.py", "line": 594, "end_line": 596, "label": "StaticFiles 挂载" },
+      { "path": "frontend/index.html", "line": 1, "label": "演示页入口" }
+    ] },
+    { "id": "gptsovits", "type": "external", "label": "GPT-SoVITS", "sublabel": "本地引擎 :9880", "tag": "WAV · 参考音克隆", "pos": [860, 120], "size": [150, 60], "sources": [
+      { "path": "backend/engines/gptsovits_client.py", "line": 40, "end_line": 62, "label": "synth → POST /tts" }
+    ] },
+    { "id": "bailian", "type": "cloud", "label": "百炼 CosyVoice", "sublabel": "DashScope HTTP / WSS", "tag": "longjiaxin_v3", "pos": [860, 280], "size": [150, 60], "sources": [
+      { "path": "backend/engines/bailian_cosyvoice_client.py", "line": 74, "end_line": 121, "label": "synth / _synth_http" }
+    ] },
+    { "id": "microsoft", "type": "cloud", "label": "Microsoft TTS", "sublabel": "edge-tts / Azure Speech", "tag": "MP3", "pos": [860, 440], "size": [150, 60], "sources": [
+      { "path": "backend/engines/microsoft_tts.py", "line": 123, "end_line": 150, "label": "EdgeTTSDriver.synth" },
+      { "path": "backend/engines/microsoft_tts.py", "line": 258, "end_line": 271, "label": "AzureSpeechDriver.synth" },
+      { "path": "backend/engines/microsoft_tts.py", "line": 301, "end_line": 330, "label": "build_microsoft_provider" }
+    ] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "contract-tts 服务（uvicorn 单进程）", "wraps": ["svc", "registry", "text", "contract-store", "segment-cache", "cleanup", "frontend"] }
+  ],
+  "connections": [
+    { "id": "caller-rest", "from": "caller", "to": "svc", "label": "REST：上传 / 取段 / 预热", "variant": "emphasis" },
+    { "id": "svc-registry", "from": "svc", "to": "registry", "label": "Profile 查找", "fromSide": "top", "toSide": "bottom" },
+    { "id": "svc-text", "from": "svc", "to": "text", "label": "切片 / 归一化", "fromSide": "top", "toSide": "bottom" },
+    { "id": "svc-store", "from": "svc", "to": "contract-store", "label": "原文读写", "fromSide": "bottom", "toSide": "top" },
+    { "id": "svc-cache", "from": "svc", "to": "segment-cache", "label": "音频读写", "fromSide": "bottom", "toSide": "top" },
+    { "id": "svc-cleanup", "from": "svc", "to": "cleanup", "label": "启动 / 每 24h 触发", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "svc-frontend", "from": "svc", "to": "frontend", "label": "StaticFiles 托管 /", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "cleanup-store", "from": "cleanup", "to": "contract-store", "label": "evict 90d", "variant": "dashed", "fromSide": "left", "toSide": "bottom" },
+    { "id": "cleanup-cache", "from": "cleanup", "to": "segment-cache", "label": "evict 30d", "variant": "dashed", "fromSide": "right", "toSide": "bottom" },
+    { "id": "svc-gptsovits", "from": "svc", "to": "gptsovits", "label": "POST /tts · WAV 流", "fromSide": "right", "toSide": "left" },
+    { "id": "svc-bailian", "from": "svc", "to": "bailian", "label": "DashScope TTS", "fromSide": "right", "toSide": "left" },
+    { "id": "svc-microsoft", "from": "svc", "to": "microsoft", "label": "SSML 合成 · MP3", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "内容寻址", "items": [
+      "contract_id = sha256(template_id | 原文)：同文同 id，重复上传幂等",
+      "cache_key 覆盖模板、归一化文本、引擎 Profile、缓存版本与合成指纹",
+      "相同样板段落跨合同复用同一段音频"
+    ] },
+    { "dot": "emerald", "title": "按需合成", "items": [
+      "上传后后台预热第 0 段，首次播放即点即响",
+      "preload 端点在后台预合成后续段",
+      "per-key asyncio.Lock：并发相同请求只合成一次"
+    ] },
+    { "dot": "violet", "title": "引擎可替换", "items": [
+      "三个适配器同构：synth(text) → AsyncIterator[bytes]",
+      "按朗读语言（yue / zh / en）独立选择引擎",
+      "整段收齐后再响应，引擎失败回明确 502"
+    ] },
+    { "dot": "amber", "title": "数据保留", "items": [
+      "原文 90 天（创建时间），音频 30 天滑动窗口（命中续期）",
+      "启动清一次 + 进程内每日清理任务（ADR-0007）",
+      "段文本不随索引回传，PII 不多过一趟网（ADR-0001）"
+    ] }
+  ]
+}

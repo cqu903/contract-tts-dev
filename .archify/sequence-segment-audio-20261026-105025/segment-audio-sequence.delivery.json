@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "c4df04b4-4618-46d8-8de9-b8c9bbeab5b1",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/roy/codes/contract-tts-dev/.archify/sequence-segment-audio-20261026-105025/candidate.json",
+  "output": "/Users/roy/codes/contract-tts-dev/.archify/sequence-segment-audio-20261026-105025/segment-audio-sequence.html",
+  "specification": {
+    "sha256": "42ea05f78c9d419207e1f3cb5ffc0b64a6aef43f8a629b7b9df9e9af82a0ffd3",
+    "bytes": 4858
+  },
+  "artifact": {
+    "sha256": "ccc5a55514ef5538c893d07ab74d12b205697006b0b92ff9788fe1e419b7e7fb",
+    "bytes": 839457
+  }
+}

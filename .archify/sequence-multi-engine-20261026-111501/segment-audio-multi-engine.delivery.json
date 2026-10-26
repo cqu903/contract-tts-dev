@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "b8992604-ec5f-4726-b288-be8ddfd64dd9",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/Users/roy/codes/contract-tts-dev/.archify/sequence-multi-engine-20261026-111501/candidate.json",
+  "output": "/Users/roy/codes/contract-tts-dev/.archify/sequence-multi-engine-20261026-111501/segment-audio-multi-engine.html",
+  "specification": {
+    "sha256": "7f7a2f25ea0f99ce237265233aef92a7e1c3a7681afceaa4c74b555d0b3e2d58",
+    "bytes": 6865
+  },
+  "artifact": {
+    "sha256": "4689c3ec1a9b7052aa57a65e1f99d35a411f66530546511eca14ca98f7e253d4",
+    "bytes": 848593
+  }
+}

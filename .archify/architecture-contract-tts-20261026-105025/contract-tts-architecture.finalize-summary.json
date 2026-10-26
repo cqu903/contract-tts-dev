@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/candidate.json",
+    "sha256": "42dac804f221ab92a2879995a55e15aa1563237ad920fbcda19df3462a01e5be",
+    "bytes": 7622
+  },
+  "artifact": {
+    "path": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.html",
+    "sha256": "059c26fe6093fa14ffa7e87c43b8cbe9f8fdc33ab506f107823d17c4b23b3dc3",
+    "bytes": 859722
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.finalize.json",
+    "summaryReceipt": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.finalize-summary.json",
+    "browserCheckReceipt": "/Users/roy/codes/contract-tts-dev/.archify/architecture-contract-tts-20261026-105025/contract-tts-architecture.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-26T02:21:22.197Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 2202,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  },
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "svc-frontend",
+            "from": "svc",
+            "to": "frontend",
+            "label": "StaticFiles 托管 /",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "bends": 4,
+          "stretch": 1.228
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "svc → frontend needs 4 bends: move node svc or frontend so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}
